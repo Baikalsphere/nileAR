@@ -168,7 +168,7 @@ export default function InvoiceDetailClient() {
                     </span>
                   </div>
                   <p className="text-slate-500 dark:text-slate-400 text-sm font-normal">
-                    {invoice.propertyName ?? 'Property'} • Issued {invoiceDate}
+                    {invoice.senderHotelName ?? invoice.propertyName ?? 'Property'} • Issued {invoiceDate}
                   </p>
                 </div>
                 <div className="flex gap-3">
@@ -308,6 +308,10 @@ export default function InvoiceDetailClient() {
               </div>
 
               <div className="p-5 space-y-4 text-sm">
+                <div className="flex justify-between items-center">
+                  <span className="text-text-sub-light dark:text-text-sub-dark">Hotel</span>
+                  <span className="font-semibold text-text-main-light dark:text-text-main-dark">{invoice.senderHotelName ?? invoice.propertyName ?? '-'}</span>
+                </div>
                 <div className="flex justify-between items-center">
                   <span className="text-text-sub-light dark:text-text-sub-dark">Employee</span>
                   <span className="font-semibold text-text-main-light dark:text-text-main-dark">{invoice.employeeName}</span>

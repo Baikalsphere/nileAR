@@ -26,6 +26,7 @@ export default function Sidebar({ title, logoIcon }: SidebarProps) {
   const organizationsHref = isHotelFinance ? '/hotel-finance/organizations' : '#'
   const bookingsHref = isHotelFinance ? '/hotel-finance/bookings' : '#'
   const hotelReportsHref = isHotelFinance ? '/hotel-finance/reports' : '#'
+  const hotelProfileHref = isHotelFinance ? '/hotel-finance/profile' : '#'
   const employeeStaysHref = isCorporatePortal ? '/corporate-portal/employee-stays' : '#'
   const employeesHref = isCorporatePortal ? '/corporate-portal/employees' : '#'
   const reportsHref = isCorporatePortal ? '/corporate-portal/reports' : '#'
@@ -37,6 +38,7 @@ export default function Sidebar({ title, logoIcon }: SidebarProps) {
   const isOrganizationsActive = pathname === organizationsHref
   const isBookingsActive = pathname === bookingsHref
   const isHotelReportsActive = pathname === hotelReportsHref
+  const isHotelProfileActive = pathname === hotelProfileHref
   const isEmployeeStaysActive = pathname === employeeStaysHref
   const isEmployeesActive = pathname === employeesHref
   const isReportsActive = pathname === reportsHref
@@ -289,6 +291,28 @@ export default function Sidebar({ title, logoIcon }: SidebarProps) {
             {isCollapsed && showTooltip === 'settings' && (
               <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2 px-3 py-2 bg-slate-800 text-white text-xs rounded-lg whitespace-nowrap z-50 shadow-lg animate-in fade-in slide-in-from-left-1 duration-200">
                 Settings
+              </div>
+            )}
+          </div>
+        )}
+        {isHotelFinance && (
+          <div 
+            className="relative mb-2"
+            onMouseEnter={() => isCollapsed && setShowTooltip('hotel-profile')}
+            onMouseLeave={() => setShowTooltip(null)}
+          >
+            <Link className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-300 group/link ${isHotelProfileActive ? 'bg-primary/10 text-primary hover:shadow-md hover:shadow-primary/20' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:translate-x-1'} ${isCollapsed ? 'justify-center' : ''}`} href={hotelProfileHref}>
+              <span className={`material-symbols-outlined text-[22px] transition-transform duration-300 ${isCollapsed ? 'group-hover/link:scale-125' : ''}`}>badge</span>
+              <p className={`text-sm font-medium transition-all duration-500 ${isCollapsed ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100 delay-75'}`}>Hotel Profile</p>
+              {!isCollapsed && (
+                <span className={`material-symbols-outlined text-[16px] ml-auto opacity-0 -translate-x-2 transition-all duration-300 ${isHotelProfileActive ? 'group-hover/link:opacity-100 group-hover/link:translate-x-0' : 'group-hover/link:opacity-100 group-hover/link:translate-x-0'}`}>
+                  arrow_forward
+                </span>
+              )}
+            </Link>
+            {isCollapsed && showTooltip === 'hotel-profile' && (
+              <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2 px-3 py-2 bg-slate-800 text-white text-xs rounded-lg whitespace-nowrap z-50 shadow-lg animate-in fade-in slide-in-from-left-1 duration-200">
+                Hotel Profile
               </div>
             )}
           </div>

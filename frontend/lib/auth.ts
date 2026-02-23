@@ -9,10 +9,41 @@ export interface AuthResponse {
   accessToken: string;
 }
 
+export interface HotelProfile {
+  hotelName: string | null;
+  gst: string | null;
+  location: string | null;
+  logoUrl: string | null;
+  contactEmail: string | null;
+  contactPhone: string | null;
+  address: string | null;
+}
+
+export interface HotelProfileResponse {
+  user: AuthUser;
+  profile: HotelProfile;
+}
+
 const apiBaseUrl =
   process.env.NEXT_PUBLIC_API_URL ??
   process.env.NEXT_PUBLIC_API_BASE_URL ??
   "http://localhost:4000";
+
+const toAbsoluteApiUrl = (value?: string | null) => {
+  if (!value) {
+    return null;
+  }
+
+  if (value.startsWith("http://") || value.startsWith("https://")) {
+    return value;
+  }
+
+  if (value.startsWith("/")) {
+    return `${apiBaseUrl}${value}`;
+  }
+
+  return value;
+};
 
 const parseErrorMessage = async (response: Response) => {
   try {
@@ -37,11 +68,12 @@ const withAlternateLocalhost = (url: string) => {
 
 const request = async <T>(path: string, options: RequestInit) => {
   const requestUrl = `${apiBaseUrl}${path}`;
+  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
   const fetchOptions: RequestInit = {
     ...options,
     credentials: "include",
     headers: {
-      "Content-Type": "application/json",
+      ...(isFormData ? {} : { "Content-Type": "application/json" }),
       ...(options.headers ?? {})
     }
   };
@@ -106,4 +138,78 @@ export const register = async (email: string, password: string, fullName?: strin
 export const logout = async () => {
   await request<{ ok: boolean }>("/api/auth/logout", { method: "POST" });
   tokenStorage.clear();
+};
+
+const getAuthHeaders = () => {
+  const token = tokenStorage.get();
+  if (!token) {
+    throw new Error("Unauthorized");
+  }
+
+  return {
+    Authorization: `Bearer ${token}`
+  };
+};
+
+export const fetchHotelProfile = async () => {
+  const response = await request<HotelProfileResponse>("/api/auth/hotel/me", {
+    method: "GET",
+    headers: {
+      ...getAuthHeaders()
+    }
+  });
+
+  return {
+    ...response,
+    profile: {
+      ...response.profile,
+      logoUrl: toAbsoluteApiUrl(response.profile.logoUrl)
+    }
+  };
+};
+
+export const updateHotelProfile = async (payload: {
+  hotelName: string;
+  gst?: string | null;
+  location?: string | null;
+  contactEmail?: string | null;
+  contactPhone?: string | null;
+  address?: string | null;
+}) => {
+  const response = await request<HotelProfileResponse>("/api/auth/hotel/profile", {
+    method: "PUT",
+    headers: {
+      ...getAuthHeaders()
+    },
+    body: JSON.stringify(payload)
+  });
+
+  return {
+    ...response,
+    profile: {
+      ...response.profile,
+      logoUrl: toAbsoluteApiUrl(response.profile.logoUrl)
+    }
+  };
+};
+
+export const uploadHotelLogo = async (file: File) => {
+  const formData = new FormData();
+  formData.set("file", file);
+
+  const response = await request<HotelProfileResponse>("/api/auth/hotel/profile/logo", {
+    method: "POST",
+    headers: {
+      ...getAuthHeaders()
+    },
+    body: formData
+  });
+
+  return {
+    ...response,
+    profile: {
+      ...response.profile,
+      logoUrl: toAbsoluteApiUrl(response.profile.logoUrl)
+    }
+  };
 };

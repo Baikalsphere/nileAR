@@ -15,6 +15,25 @@ CREATE TABLE IF NOT EXISTS users (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS hotel_profiles (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  hotel_name text,
+  gst text,
+  location text,
+  logo_url text,
+  contact_email citext,
+  contact_phone text,
+  address text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+ALTER TABLE hotel_profiles
+  DROP COLUMN IF EXISTS website;
+
+CREATE INDEX IF NOT EXISTS hotel_profiles_user_id_idx ON hotel_profiles(user_id);
+
 CREATE TABLE IF NOT EXISTS refresh_tokens (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -54,6 +73,7 @@ ALTER TABLE organizations
   ADD COLUMN IF NOT EXISTS registered_address text,
   ADD COLUMN IF NOT EXISTS contact_email citext,
   ADD COLUMN IF NOT EXISTS contact_phone text,
+  ADD COLUMN IF NOT EXISTS created_by_user_id uuid REFERENCES users(id) ON DELETE SET NULL,
   ADD COLUMN IF NOT EXISTS contact_person text,
   ADD COLUMN IF NOT EXISTS billing_address text,
   ADD COLUMN IF NOT EXISTS pan_card text,
@@ -61,15 +81,38 @@ ALTER TABLE organizations
 
 CREATE INDEX IF NOT EXISTS organizations_name_idx ON organizations(name);
 CREATE INDEX IF NOT EXISTS organizations_status_idx ON organizations(status);
+CREATE INDEX IF NOT EXISTS organizations_created_by_user_id_idx ON organizations(created_by_user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS organizations_contact_email_uniq
   ON organizations(contact_email)
   WHERE contact_email IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS hotel_organizations (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  hotel_user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  organization_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (hotel_user_id, organization_id)
+);
+
+CREATE INDEX IF NOT EXISTS hotel_organizations_hotel_user_id_idx
+  ON hotel_organizations(hotel_user_id);
+
+CREATE INDEX IF NOT EXISTS hotel_organizations_organization_id_idx
+  ON hotel_organizations(organization_id);
+
+INSERT INTO hotel_organizations (hotel_user_id, organization_id)
+SELECT o.created_by_user_id, o.id
+FROM organizations o
+WHERE o.created_by_user_id IS NOT NULL
+ON CONFLICT (hotel_user_id, organization_id) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS organization_contracts (
   id text PRIMARY KEY,
   organization_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  hotel_user_id uuid REFERENCES users(id) ON DELETE SET NULL,
   status text NOT NULL DEFAULT 'draft',
   contract_data jsonb NOT NULL,
+  pdf_storage_path text,
   sign_token text UNIQUE,
   sign_token_expires_at timestamptz,
   signed_by text,
@@ -81,8 +124,25 @@ CREATE TABLE IF NOT EXISTS organization_contracts (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+ALTER TABLE organization_contracts
+  ADD COLUMN IF NOT EXISTS hotel_user_id uuid REFERENCES users(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS pdf_storage_path text;
+
+UPDATE organization_contracts c
+SET hotel_user_id = o.created_by_user_id
+FROM organizations o
+WHERE c.organization_id = o.id
+  AND c.hotel_user_id IS NULL
+  AND o.created_by_user_id IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS organization_contracts_organization_id_idx
   ON organization_contracts(organization_id);
+
+CREATE INDEX IF NOT EXISTS organization_contracts_hotel_user_id_idx
+  ON organization_contracts(hotel_user_id);
+
+CREATE INDEX IF NOT EXISTS organization_contracts_org_hotel_created_idx
+  ON organization_contracts(organization_id, hotel_user_id, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS organization_contracts_created_at_idx
   ON organization_contracts(created_at DESC);
@@ -103,6 +163,12 @@ $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS users_set_updated_at ON users;
 CREATE TRIGGER users_set_updated_at
   BEFORE UPDATE ON users
+  FOR EACH ROW
+  EXECUTE PROCEDURE set_updated_at();
+
+DROP TRIGGER IF EXISTS hotel_profiles_set_updated_at ON hotel_profiles;
+CREATE TRIGGER hotel_profiles_set_updated_at
+  BEFORE UPDATE ON hotel_profiles
   FOR EACH ROW
   EXECUTE PROCEDURE set_updated_at();
 

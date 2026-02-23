@@ -5,11 +5,17 @@ import path from "node:path";
 import bcrypt from "bcrypt";
 import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
+import multer from "multer";
 import { z } from "zod";
 import { config } from "../config.js";
 import { query } from "../db.js";
 import { authLimiter } from "../middleware/rateLimiters.js";
-import { createBillSignedUrl } from "../services/supabaseStorage.js";
+import {
+  createBillSignedUrl,
+  deleteBillFromSupabase,
+  isSupabaseStorageConfigured,
+  uploadHotelLogoToSupabase
+} from "../services/supabaseStorage.js";
 
 const router = Router();
 
@@ -52,6 +58,16 @@ const corporateProfileSchema = z.object({
   address: z.string().max(320).optional().nullable(),
   contactEmail: z.string().email().max(320).optional().nullable(),
   phone: z.string().max(40).optional().nullable()
+});
+
+const hotelProfileSchema = z.object({
+  hotelName: z.string().min(2).max(160),
+  gst: z.string().max(64).optional().nullable(),
+  location: z.string().max(160).optional().nullable(),
+  logoUrl: z.string().url().max(2000).optional().nullable(),
+  contactEmail: z.string().email().max(320).optional().nullable(),
+  contactPhone: z.string().max(40).optional().nullable(),
+  address: z.string().max(400).optional().nullable()
 });
 
 const corporateSetPasswordSchema = z.object({
@@ -98,6 +114,13 @@ const corporateEmployeeListQuerySchema = z.object({
   search: z.string().max(160).optional()
 });
 
+const hotelLogoUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 5 * 1024 * 1024
+  }
+});
+
 const parseTtlMs = (ttl: string) => {
   const match = ttl.match(/^(\d+)([smhd])$/);
   if (!match) {
@@ -120,6 +143,13 @@ const refreshCookieOptions = {
   sameSite: "strict" as const,
   path: "/api/auth/refresh",
   maxAge: parseTtlMs(config.refreshTokenTtl)
+};
+
+const refreshCookieClearOptions = {
+  httpOnly: true,
+  secure: config.isProd,
+  sameSite: "strict" as const,
+  path: "/api/auth/refresh"
 };
 
 const createAccessToken = (userId: string, role: string): string => {
@@ -165,6 +195,16 @@ interface CorporateAccessTokenPayload {
   aud: string;
 }
 
+interface HotelAccessTokenPayload {
+  sub: string;
+  role: string;
+  scope: string;
+  iat: number;
+  exp: number;
+  iss: string;
+  aud: string;
+}
+
 const getCorporatePayload = (req: Request, res: Response): CorporateAccessTokenPayload | null => {
   const header = req.headers.authorization;
   const queryToken = typeof req.query.token === "string" ? req.query.token : null;
@@ -195,6 +235,35 @@ const getCorporatePayload = (req: Request, res: Response): CorporateAccessTokenP
   }
 };
 
+const getHotelPayload = (req: Request, res: Response): HotelAccessTokenPayload | null => {
+  const header = req.headers.authorization;
+  const token = header && header.startsWith("Bearer ")
+    ? header.slice("Bearer ".length).trim()
+    : null;
+
+  if (!token) {
+    res.status(401).json({ error: { message: "Unauthorized" } });
+    return null;
+  }
+
+  try {
+    const payload = jwt.verify(token, config.jwtAccessSecret, {
+      issuer: "hotel-finance-api",
+      audience: "hotel-finance-web"
+    }) as HotelAccessTokenPayload;
+
+    if (payload.scope !== "hotel-finance") {
+      res.status(403).json({ error: { message: "Forbidden" } });
+      return null;
+    }
+
+    return payload;
+  } catch {
+    res.status(401).json({ error: { message: "Unauthorized" } });
+    return null;
+  }
+};
+
 const normalizeOptional = (value?: string | null) => {
   if (value === undefined || value === null) {
     return null;
@@ -202,6 +271,19 @@ const normalizeOptional = (value?: string | null) => {
 
   const normalized = value.trim();
   return normalized.length > 0 ? normalized : null;
+};
+
+const resolveHotelLogoUrl = (hotelUserId: string, storedValue?: string | null) => {
+  const normalized = normalizeOptional(storedValue);
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.startsWith("http://") || normalized.startsWith("https://")) {
+    return normalized;
+  }
+
+  return `/api/auth/hotel/logo/${encodeURIComponent(hotelUserId)}/file`;
 };
 
 const createRefreshToken = async (userId: string, userAgent?: string, ipAddress?: string) => {
@@ -243,6 +325,21 @@ router.post("/register", authLimiter, async (req, res, next) => {
     );
 
     const user = result.rows[0];
+
+    await query(
+      `INSERT INTO hotel_profiles (user_id, hotel_name, contact_email)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (user_id)
+       DO UPDATE SET
+         hotel_name = COALESCE(hotel_profiles.hotel_name, EXCLUDED.hotel_name),
+         contact_email = COALESCE(hotel_profiles.contact_email, EXCLUDED.contact_email)`,
+      [
+        user.id,
+        fullName?.trim() || normalizedEmail.split("@")[0],
+        normalizedEmail
+      ]
+    );
+
     const accessToken = createAccessToken(user.id, user.role);
     const refreshToken = await createRefreshToken(user.id, req.get("user-agent"), req.ip);
 
@@ -308,6 +405,19 @@ router.post("/login", authLimiter, async (req, res, next) => {
        SET failed_login_attempts = 0, locked_until = NULL, last_login_at = now()
        WHERE id = $1`,
       [user.id]
+    );
+
+    await query(
+      `INSERT INTO hotel_profiles (user_id, hotel_name, contact_email)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (user_id)
+       DO UPDATE SET
+         contact_email = COALESCE(hotel_profiles.contact_email, EXCLUDED.contact_email)`,
+      [
+        user.id,
+        normalizedEmail.split("@")[0],
+        normalizedEmail
+      ]
     );
 
     const accessToken = createAccessToken(user.id, user.role);
@@ -382,9 +492,262 @@ router.post("/logout", async (req, res, next) => {
       await revokeRefreshToken(tokenHash);
     }
 
-    res.clearCookie("refresh_token", refreshCookieOptions);
+    res.clearCookie("refresh_token", refreshCookieClearOptions);
     return res.status(200).json({ ok: true });
   } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/hotel/logo/:hotelUserId/file", async (req, res, next) => {
+  try {
+    const hotelUserId = req.params.hotelUserId;
+    const result = await query(
+      `SELECT logo_url
+       FROM hotel_profiles
+       WHERE user_id = $1
+       LIMIT 1`,
+      [hotelUserId]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: { message: "Hotel logo not found" } });
+    }
+
+    const logoValue = normalizeOptional(result.rows[0].logo_url);
+    if (!logoValue) {
+      return res.status(404).json({ error: { message: "Hotel logo not found" } });
+    }
+
+    if (logoValue.startsWith("http://") || logoValue.startsWith("https://")) {
+      return res.redirect(302, logoValue);
+    }
+
+    const signedUrl = await createBillSignedUrl(logoValue, 60);
+    const cloudResponse = await fetch(signedUrl);
+    if (!cloudResponse.ok) {
+      return res.status(404).json({ error: { message: "Hotel logo not found on cloud storage" } });
+    }
+
+    const contentType = cloudResponse.headers.get("content-type") || "application/octet-stream";
+    const buffer = Buffer.from(await cloudResponse.arrayBuffer());
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Cache-Control", "private, max-age=60");
+    return res.send(buffer);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/hotel/me", async (req, res, next) => {
+  try {
+    const payload = getHotelPayload(req, res);
+    if (!payload) {
+      return;
+    }
+
+    const result = await query(
+      `SELECT u.id, u.email, u.role,
+              hp.hotel_name, hp.gst, hp.location, hp.logo_url,
+              hp.contact_email, hp.contact_phone, hp.address
+       FROM users u
+       LEFT JOIN hotel_profiles hp ON hp.user_id = u.id
+       WHERE u.id = $1
+       LIMIT 1`,
+      [payload.sub]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(401).json({ error: { message: "Unauthorized" } });
+    }
+
+    const row = result.rows[0];
+
+    return res.status(200).json({
+      user: {
+        id: row.id,
+        email: row.email,
+        role: row.role
+      },
+      profile: {
+        hotelName: row.hotel_name,
+        gst: row.gst,
+        location: row.location,
+        logoUrl: resolveHotelLogoUrl(row.id, row.logo_url),
+        contactEmail: row.contact_email,
+        contactPhone: row.contact_phone,
+        address: row.address
+      }
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/hotel/profile/logo", hotelLogoUpload.single("file"), async (req, res, next) => {
+  try {
+    const payload = getHotelPayload(req, res);
+    if (!payload) {
+      return;
+    }
+
+    if (!isSupabaseStorageConfigured()) {
+      return res.status(500).json({ error: { message: "Supabase storage is not configured" } });
+    }
+
+    const uploadedFile = req.file;
+    if (!uploadedFile) {
+      return res.status(400).json({ error: { message: "Attach an image before uploading" } });
+    }
+
+    if (!uploadedFile.mimetype?.toLowerCase().startsWith("image/")) {
+      return res.status(400).json({ error: { message: "Only image files are allowed for logo upload" } });
+    }
+
+    const currentResult = await query(
+      `SELECT logo_url
+       FROM hotel_profiles
+       WHERE user_id = $1
+       LIMIT 1`,
+      [payload.sub]
+    );
+
+    const uploaded = await uploadHotelLogoToSupabase({
+      userId: payload.sub,
+      originalFileName: uploadedFile.originalname,
+      mimeType: uploadedFile.mimetype,
+      fileBuffer: uploadedFile.buffer
+    });
+
+    await query(
+      `INSERT INTO hotel_profiles (user_id, logo_url)
+       VALUES ($1, $2)
+       ON CONFLICT (user_id)
+       DO UPDATE SET logo_url = EXCLUDED.logo_url`,
+      [payload.sub, uploaded.objectPath]
+    );
+
+    const oldLogo = normalizeOptional(currentResult.rows[0]?.logo_url ?? null);
+    if (oldLogo && !oldLogo.startsWith("http://") && !oldLogo.startsWith("https://") && oldLogo !== uploaded.objectPath) {
+      await deleteBillFromSupabase(oldLogo).catch(() => undefined);
+    }
+
+    const profileResult = await query(
+      `SELECT u.id, u.email, u.role,
+              hp.hotel_name, hp.gst, hp.location, hp.logo_url,
+              hp.contact_email, hp.contact_phone, hp.address
+       FROM users u
+       LEFT JOIN hotel_profiles hp ON hp.user_id = u.id
+       WHERE u.id = $1
+       LIMIT 1`,
+      [payload.sub]
+    );
+
+    const row = profileResult.rows[0];
+    return res.status(200).json({
+      user: {
+        id: row.id,
+        email: row.email,
+        role: row.role
+      },
+      profile: {
+        hotelName: row.hotel_name,
+        gst: row.gst,
+        location: row.location,
+        logoUrl: resolveHotelLogoUrl(row.id, row.logo_url),
+        contactEmail: row.contact_email,
+        contactPhone: row.contact_phone,
+        address: row.address
+      }
+    });
+  } catch (error: any) {
+    const message = error instanceof Error ? error.message : "Failed to upload hotel logo";
+
+    if (message.toLowerCase().includes("supabase upload failed")) {
+      return res.status(502).json({ error: { message } });
+    }
+
+    if (message.toLowerCase().includes("bucket") && message.toLowerCase().includes("not")) {
+      return res.status(500).json({ error: { message: "Supabase bucket is missing. Create the storage bucket and retry." } });
+    }
+
+    return next(error);
+  }
+});
+
+router.put("/hotel/profile", async (req, res, next) => {
+  try {
+    const payload = getHotelPayload(req, res);
+    if (!payload) {
+      return;
+    }
+
+    const form = hotelProfileSchema.parse(req.body);
+
+    const result = await query(
+      `INSERT INTO hotel_profiles (
+         user_id,
+         hotel_name,
+         gst,
+         location,
+         contact_email,
+         contact_phone,
+         address
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (user_id)
+       DO UPDATE SET
+         hotel_name = EXCLUDED.hotel_name,
+         gst = EXCLUDED.gst,
+         location = EXCLUDED.location,
+         contact_email = EXCLUDED.contact_email,
+         contact_phone = EXCLUDED.contact_phone,
+         address = EXCLUDED.address
+       RETURNING user_id, hotel_name, gst, location, logo_url, contact_email, contact_phone, address`,
+      [
+        payload.sub,
+        form.hotelName.trim(),
+        normalizeOptional(form.gst),
+        normalizeOptional(form.location),
+        normalizeOptional(form.contactEmail)?.toLowerCase() ?? null,
+        normalizeOptional(form.contactPhone),
+        normalizeOptional(form.address)
+      ]
+    );
+
+    const userResult = await query(
+      `SELECT id, email, role FROM users WHERE id = $1 LIMIT 1`,
+      [payload.sub]
+    );
+
+    if (userResult.rowCount === 0) {
+      return res.status(404).json({ error: { message: "User not found" } });
+    }
+
+    const user = userResult.rows[0];
+    const profile = result.rows[0];
+
+    return res.status(200).json({
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role
+      },
+      profile: {
+        hotelName: profile.hotel_name,
+        gst: profile.gst,
+        location: profile.location,
+        logoUrl: resolveHotelLogoUrl(user.id, profile.logo_url),
+        contactEmail: profile.contact_email,
+        contactPhone: profile.contact_phone,
+        address: profile.address
+      }
+    });
+  } catch (error: any) {
+    if (error?.code === "23505") {
+      return res.status(409).json({ error: { message: "Contact email is already in use" } });
+    }
+
     return next(error);
   }
 });
@@ -742,6 +1105,60 @@ router.put("/corporate/employees/:employeeId", async (req, res, next) => {
   }
 });
 
+router.get("/corporate/hotels", async (req, res, next) => {
+  try {
+    const payload = getCorporatePayload(req, res);
+    if (!payload) {
+      return;
+    }
+
+    const result = await query(
+      `SELECT ho.hotel_user_id AS hotel_id,
+              COALESCE(hp.hotel_name, u.full_name, u.email, 'Hotel') AS hotel_name,
+              COALESCE(hp.location, '-') AS location,
+              hp.logo_url,
+              COUNT(b.id)::int AS total_stays,
+              COUNT(*) FILTER (WHERE b.status IN ('pending', 'confirmed', 'checked-in'))::int AS active_stays,
+              COALESCE(SUM(b.total_price), 0) AS total_spent,
+              COALESCE(SUM(CASE WHEN i.status IN ('unpaid', 'overdue') THEN i.amount ELSE 0 END), 0) AS outstanding,
+              COUNT(*) FILTER (WHERE i.status IN ('unpaid', 'overdue'))::int AS pending_invoices,
+              MAX(b.check_out_date) AS last_stay_date
+       FROM hotel_organizations ho
+       JOIN users u ON u.id = ho.hotel_user_id
+       LEFT JOIN hotel_profiles hp ON hp.user_id = ho.hotel_user_id
+       LEFT JOIN hotel_bookings b ON b.organization_id = ho.organization_id
+                                AND b.created_by = ho.hotel_user_id::text
+       LEFT JOIN corporate_invoices i ON i.booking_id = b.id
+       WHERE ho.organization_id = $1
+       GROUP BY ho.hotel_user_id, hp.user_id, hp.hotel_name, hp.location, hp.logo_url, u.full_name, u.email
+       ORDER BY COALESCE(MAX(b.created_at), now()) DESC`,
+      [payload.sub]
+    );
+
+    const hotels = result.rows.map((row) => {
+      const outstanding = Number(row.outstanding ?? 0);
+
+      return {
+        id: row.hotel_id,
+        name: row.hotel_name || "Hotel",
+        location: row.location || "-",
+        logoUrl: resolveHotelLogoUrl(row.hotel_id, row.logo_url),
+        totalStays: Number(row.total_stays ?? 0),
+        activeStays: Number(row.active_stays ?? 0),
+        totalSpent: Number(row.total_spent ?? 0),
+        outstanding,
+        pendingInvoices: Number(row.pending_invoices ?? 0),
+        lastStayDate: row.last_stay_date,
+        status: outstanding > 0 ? "active" : "settled"
+      };
+    });
+
+    return res.status(200).json({ hotels });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.get("/corporate/invoices", async (req, res, next) => {
   try {
     const payload = getCorporatePayload(req, res);
@@ -752,12 +1169,18 @@ router.get("/corporate/invoices", async (req, res, next) => {
     const result = await query(
       `SELECT i.id, i.invoice_number, i.invoice_date, i.due_date, i.amount, i.status,
               i.sent_at, i.created_at,
+              b.created_by AS hotel_id,
               e.full_name AS employee_name,
               e.employee_code,
-              s.property_name
+        s.property_name,
+        hp.hotel_name AS sender_hotel_name,
+        hp.logo_url AS sender_hotel_logo_url,
+        hp.location AS sender_hotel_location
        FROM corporate_invoices i
+      JOIN hotel_bookings b ON b.id = i.booking_id
        JOIN corporate_employees e ON e.id = i.employee_id
        LEFT JOIN employee_stays s ON s.invoice_id = i.id
+      LEFT JOIN hotel_profiles hp ON hp.user_id::text = b.created_by
        WHERE i.organization_id = $1
        ORDER BY i.created_at DESC`,
       [payload.sub]
@@ -765,6 +1188,7 @@ router.get("/corporate/invoices", async (req, res, next) => {
 
     const invoices = result.rows.map((row) => ({
       id: row.id,
+      hotelId: row.hotel_id,
       invoiceNumber: row.invoice_number,
       invoiceDate: row.invoice_date,
       dueDate: row.due_date,
@@ -773,6 +1197,9 @@ router.get("/corporate/invoices", async (req, res, next) => {
       employeeName: row.employee_name,
       employeeCode: row.employee_code,
       propertyName: row.property_name,
+      senderHotelName: row.sender_hotel_name,
+      senderHotelLogoUrl: resolveHotelLogoUrl(row.hotel_id, row.sender_hotel_logo_url),
+      senderHotelLocation: row.sender_hotel_location,
       sentAt: row.sent_at,
       createdAt: row.created_at
     }));
@@ -796,11 +1223,16 @@ router.get("/corporate/invoices/:invoiceId", async (req, res, next) => {
               i.sent_at, i.created_at,
               b.id AS booking_id, b.booking_number, b.room_type, b.check_in_date, b.check_out_date,
               e.full_name AS employee_name, e.employee_code,
-              s.property_name
+              b.created_by AS hotel_id,
+              s.property_name,
+              hp.hotel_name AS sender_hotel_name,
+              hp.logo_url AS sender_hotel_logo_url,
+              hp.location AS sender_hotel_location
        FROM corporate_invoices i
        JOIN hotel_bookings b ON b.id = i.booking_id
        JOIN corporate_employees e ON e.id = i.employee_id
        LEFT JOIN employee_stays s ON s.invoice_id = i.id
+      LEFT JOIN hotel_profiles hp ON hp.user_id::text = b.created_by
        WHERE i.organization_id = $1
          AND (i.id::text = $2 OR i.invoice_number = $2)
        LIMIT 1`,
@@ -851,6 +1283,9 @@ router.get("/corporate/invoices/:invoiceId", async (req, res, next) => {
         employeeName: row.employee_name,
         employeeCode: row.employee_code,
         propertyName: row.property_name,
+        senderHotelName: row.sender_hotel_name,
+        senderHotelLogoUrl: resolveHotelLogoUrl(row.hotel_id, row.sender_hotel_logo_url),
+        senderHotelLocation: row.sender_hotel_location,
         sentAt: row.sent_at,
         createdAt: row.created_at,
         bills

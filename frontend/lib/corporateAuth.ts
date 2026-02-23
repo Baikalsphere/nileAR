@@ -53,6 +53,7 @@ export interface CorporateEmployeePayload {
 
 export interface CorporateInvoice {
   id: string;
+  hotelId: string;
   invoiceNumber: string;
   invoiceDate: string;
   dueDate: string;
@@ -61,8 +62,25 @@ export interface CorporateInvoice {
   employeeName: string;
   employeeCode: string;
   propertyName: string | null;
+  senderHotelName: string | null;
+  senderHotelLogoUrl: string | null;
+  senderHotelLocation: string | null;
   sentAt: string | null;
   createdAt: string;
+}
+
+export interface CorporateHotelSummary {
+  id: string;
+  name: string;
+  location: string;
+  logoUrl: string | null;
+  totalStays: number;
+  activeStays: number;
+  totalSpent: number;
+  outstanding: number;
+  pendingInvoices: number;
+  lastStayDate: string | null;
+  status: "active" | "settled";
 }
 
 export interface CorporateInvoiceDetail {
@@ -79,6 +97,9 @@ export interface CorporateInvoiceDetail {
   employeeName: string;
   employeeCode: string;
   propertyName: string | null;
+  senderHotelName: string | null;
+  senderHotelLogoUrl: string | null;
+  senderHotelLocation: string | null;
   sentAt: string | null;
   createdAt: string;
   bills: Array<{
@@ -116,6 +137,22 @@ export const corporateApiBaseUrl =
   process.env.NEXT_PUBLIC_API_URL ??
   process.env.NEXT_PUBLIC_API_BASE_URL ??
   "http://localhost:4000";
+
+const toAbsoluteApiUrl = (value?: string | null) => {
+  if (!value) {
+    return null;
+  }
+
+  if (value.startsWith("http://") || value.startsWith("https://")) {
+    return value;
+  }
+
+  if (value.startsWith("/")) {
+    return `${corporateApiBaseUrl}${value}`;
+  }
+
+  return value;
+};
 const corporateTokenKey = "cp_access_token";
 
 const parseErrorMessage = async (response: Response) => {
@@ -334,7 +371,36 @@ export const fetchCorporateInvoices = async () => {
     throw new Error(message);
   }
 
-  return (await response.json()) as { invoices: CorporateInvoice[] };
+  const data = (await response.json()) as { invoices: CorporateInvoice[] };
+  return {
+    invoices: data.invoices.map((invoice) => ({
+      ...invoice,
+      senderHotelLogoUrl: toAbsoluteApiUrl(invoice.senderHotelLogoUrl)
+    }))
+  };
+};
+
+export const fetchCorporateHotels = async () => {
+  const response = await fetch(`${corporateApiBaseUrl}/api/auth/corporate/hotels`, {
+    method: "GET",
+    credentials: "include",
+    headers: {
+      ...getCorporateAuthHeaders()
+    }
+  });
+
+  if (!response.ok) {
+    const message = await parseErrorMessage(response);
+    throw new Error(message);
+  }
+
+  const data = (await response.json()) as { hotels: CorporateHotelSummary[] };
+  return {
+    hotels: data.hotels.map((hotel) => ({
+      ...hotel,
+      logoUrl: toAbsoluteApiUrl(hotel.logoUrl)
+    }))
+  };
 };
 
 export const fetchCorporateInvoiceDetail = async (invoiceId: string) => {
@@ -351,7 +417,13 @@ export const fetchCorporateInvoiceDetail = async (invoiceId: string) => {
     throw new Error(message);
   }
 
-  return (await response.json()) as { invoice: CorporateInvoiceDetail };
+  const data = (await response.json()) as { invoice: CorporateInvoiceDetail };
+  return {
+    invoice: {
+      ...data.invoice,
+      senderHotelLogoUrl: toAbsoluteApiUrl(data.invoice.senderHotelLogoUrl)
+    }
+  };
 };
 
 export const fetchCorporateEmployeeStays = async () => {

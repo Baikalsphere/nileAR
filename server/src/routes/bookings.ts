@@ -73,6 +73,47 @@ const normalizeOptional = (value?: string | null) => {
   return normalized.length > 0 ? normalized : null;
 };
 
+let ensureHotelOrganizationsTablePromise: Promise<void> | null = null;
+
+const ensureHotelOrganizationsTable = async () => {
+  if (!ensureHotelOrganizationsTablePromise) {
+    ensureHotelOrganizationsTablePromise = (async () => {
+      await query(
+        `CREATE TABLE IF NOT EXISTS hotel_organizations (
+           id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+           hotel_user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+           organization_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+           created_at timestamptz NOT NULL DEFAULT now(),
+           UNIQUE (hotel_user_id, organization_id)
+         )`
+      );
+
+      await query(
+        `CREATE INDEX IF NOT EXISTS hotel_organizations_hotel_user_id_idx
+         ON hotel_organizations(hotel_user_id)`
+      );
+
+      await query(
+        `CREATE INDEX IF NOT EXISTS hotel_organizations_organization_id_idx
+         ON hotel_organizations(organization_id)`
+      );
+
+      await query(
+        `INSERT INTO hotel_organizations (hotel_user_id, organization_id)
+         SELECT o.created_by_user_id, o.id
+         FROM organizations o
+         WHERE o.created_by_user_id IS NOT NULL
+         ON CONFLICT (hotel_user_id, organization_id) DO NOTHING`
+      );
+    })().catch((error) => {
+      ensureHotelOrganizationsTablePromise = null;
+      throw error;
+    });
+  }
+
+  await ensureHotelOrganizationsTablePromise;
+};
+
 const getDaysBetween = (checkInDate: string, checkOutDate: string) => {
   const checkIn = new Date(checkInDate);
   const checkOut = new Date(checkOutDate);
@@ -116,14 +157,18 @@ const resolveNightlyRate = (roomRate: any): number | null => {
   return null;
 };
 
-const getLatestSignedContract = async (organizationId: string) => {
+const getLatestSignedContract = async (organizationId: string, hotelUserId: string) => {
   const contractResult = await query(
-    `SELECT id, contract_data
-     FROM organization_contracts
-     WHERE organization_id = $1 AND status = 'signed'
-     ORDER BY signed_at DESC NULLS LAST, created_at DESC
+    `SELECT c.id, c.contract_data
+     FROM organization_contracts c
+     JOIN hotel_organizations ho ON ho.organization_id = c.organization_id
+     WHERE c.organization_id = $1
+       AND c.status = 'signed'
+       AND c.hotel_user_id = $2
+       AND ho.hotel_user_id = $2
+     ORDER BY c.signed_at DESC NULLS LAST, c.created_at DESC
      LIMIT 1`,
-    [organizationId]
+    [organizationId, hotelUserId]
   );
 
   if (contractResult.rowCount === 0) {
@@ -134,14 +179,26 @@ const getLatestSignedContract = async (organizationId: string) => {
 };
 
 router.use(requireAuth);
+router.use(async (_req, _res, next) => {
+  try {
+    await ensureHotelOrganizationsTable();
+    return next();
+  } catch (error) {
+    return next(error);
+  }
+});
 
 router.get("/meta/organizations", async (req, res, next) => {
   try {
+    const userId = req.user?.id;
     const result = await query(
-      `SELECT id, name, contact_email
-       FROM organizations
-       WHERE is_active = true
-       ORDER BY name ASC`
+      `SELECT o.id, o.name, o.contact_email
+       FROM organizations o
+       JOIN hotel_organizations ho ON ho.organization_id = o.id
+       WHERE o.is_active = true
+         AND ho.hotel_user_id = $1
+       ORDER BY o.name ASC`,
+      [userId]
     );
 
     const organizations = result.rows.map((row) => ({
@@ -159,13 +216,21 @@ router.get("/meta/organizations", async (req, res, next) => {
 router.get("/meta/organizations/:organizationId/employees", async (req, res, next) => {
   try {
     const organizationId = req.params.organizationId;
+    const userId = req.user?.id;
 
     const result = await query(
       `SELECT id, employee_code, full_name, email, department, designation
        FROM corporate_employees
-       WHERE organization_id = $1 AND is_active = true
+       WHERE organization_id = $1
+         AND is_active = true
+         AND EXISTS (
+           SELECT 1
+           FROM hotel_organizations ho
+           WHERE ho.organization_id = corporate_employees.organization_id
+             AND ho.hotel_user_id = $2
+         )
        ORDER BY full_name ASC`,
-      [organizationId]
+      [organizationId, userId]
     );
 
     const employees = result.rows.map((row) => ({
@@ -186,7 +251,8 @@ router.get("/meta/organizations/:organizationId/employees", async (req, res, nex
 router.get("/meta/organizations/:organizationId/room-types", async (req, res, next) => {
   try {
     const organizationId = req.params.organizationId;
-    const contract = await getLatestSignedContract(organizationId);
+    const userId = req.user?.id;
+    const contract = await getLatestSignedContract(organizationId, String(userId));
 
     if (!contract) {
       return res.status(404).json({ error: { message: "No signed contract found for this organization" } });
@@ -224,6 +290,7 @@ router.get("/meta/organizations/:organizationId/room-types", async (req, res, ne
 
 router.get("/", async (req, res, next) => {
   try {
+    const userId = req.user?.id;
     const status = typeof req.query.status === "string" ? req.query.status : null;
     const fromDate = typeof req.query.fromDate === "string" ? req.query.fromDate : null;
     const toDate = typeof req.query.toDate === "string" ? req.query.toDate : null;
@@ -243,8 +310,9 @@ router.get("/", async (req, res, next) => {
        WHERE ($1::text IS NULL OR b.status = $1)
          AND ($2::date IS NULL OR b.check_in_date >= $2::date)
          AND ($3::date IS NULL OR b.check_out_date <= $3::date)
+         AND b.created_by = $4
        ORDER BY b.created_at DESC`,
-      [status, fromDate, toDate]
+      [status, fromDate, toDate, userId]
     );
 
     const bookings = result.rows.map((row) => ({
@@ -276,9 +344,10 @@ router.get("/", async (req, res, next) => {
 
 router.post("/", async (req, res, next) => {
   try {
+    const userId = req.user?.id;
     const payload = createBookingSchema.parse(req.body);
 
-    const contract = await getLatestSignedContract(payload.organizationId);
+    const contract = await getLatestSignedContract(payload.organizationId, String(userId));
     if (!contract) {
       return res.status(400).json({ error: { message: "Selected organization does not have a signed contract" } });
     }
@@ -335,7 +404,7 @@ router.post("/", async (req, res, next) => {
         totalPrice,
         payload.gstApplicable,
         payload.status,
-        req.user?.id ?? null
+        userId ?? null
       ]
     );
 
@@ -368,6 +437,7 @@ router.post("/", async (req, res, next) => {
 router.get("/:bookingId", async (req, res, next) => {
   try {
     const bookingId = req.params.bookingId;
+    const userId = req.user?.id;
     const result = await query(
       `SELECT b.id, b.booking_number, b.organization_id, b.employee_id, b.room_type,
               b.check_in_date, b.check_out_date, b.nights, b.price_per_night,
@@ -377,8 +447,9 @@ router.get("/:bookingId", async (req, res, next) => {
        FROM hotel_bookings b
        JOIN organizations o ON o.id = b.organization_id
        JOIN corporate_employees e ON e.id = b.employee_id
-       WHERE b.id = $1`,
-      [bookingId]
+       WHERE b.id = $1
+         AND b.created_by = $2`,
+      [bookingId, userId]
     );
 
     if (result.rowCount === 0) {
@@ -416,13 +487,20 @@ router.get("/:bookingId", async (req, res, next) => {
 router.get("/:bookingId/bills", async (req, res, next) => {
   try {
     const bookingId = req.params.bookingId;
+    const userId = req.user?.id;
     const result = await query(
       `SELECT id, bill_category, file_name, storage_path, cloud_url, storage_provider,
               cloud_public_id, bill_amount, mime_type, file_size, notes, created_at
        FROM booking_bills
        WHERE booking_id = $1
+         AND EXISTS (
+           SELECT 1
+           FROM hotel_bookings hb
+           WHERE hb.id = booking_bills.booking_id
+             AND hb.created_by = $2
+         )
        ORDER BY created_at DESC`,
-      [bookingId]
+      [bookingId, userId]
     );
 
     const bills = result.rows.map((row) => ({
@@ -449,6 +527,7 @@ router.get("/:bookingId/bills", async (req, res, next) => {
 router.post("/:bookingId/bills", billUpload.single("file"), async (req, res, next) => {
   try {
     const bookingId = req.params.bookingId;
+    const userId = req.user?.id;
     const payload = bookingBillsSchema.parse(req.body);
     const uploadedFile = req.file;
 
@@ -460,7 +539,13 @@ router.post("/:bookingId/bills", billUpload.single("file"), async (req, res, nex
       return res.status(500).json({ error: { message: "Supabase storage is not configured" } });
     }
 
-    const booking = await query(`SELECT id FROM hotel_bookings WHERE id = $1`, [bookingId]);
+    const booking = await query(
+      `SELECT id
+       FROM hotel_bookings
+       WHERE id = $1
+         AND created_by = $2`,
+      [bookingId, userId]
+    );
     if (booking.rowCount === 0) {
       return res.status(404).json({ error: { message: "Booking not found" } });
     }
@@ -523,13 +608,17 @@ router.post("/:bookingId/bills", billUpload.single("file"), async (req, res, nex
 router.delete("/:bookingId/bills/:billId", async (req, res, next) => {
   try {
     const { bookingId, billId } = req.params;
+    const userId = req.user?.id;
 
     const current = await query(
       `SELECT id, storage_path, cloud_public_id, storage_provider
-       FROM booking_bills
-       WHERE id = $1 AND booking_id = $2
+       FROM booking_bills bb
+       JOIN hotel_bookings hb ON hb.id = bb.booking_id
+       WHERE bb.id = $1
+         AND bb.booking_id = $2
+         AND hb.created_by = $3
        LIMIT 1`,
-      [billId, bookingId]
+      [billId, bookingId, userId]
     );
 
     if (current.rowCount === 0) {
@@ -564,6 +653,7 @@ router.post("/:bookingId/send", async (req, res, next) => {
 
   try {
     const bookingId = req.params.bookingId;
+    const userId = req.user?.id;
     const payload = sendInvoiceSchema.parse(req.body);
 
     await client.query("BEGIN");
@@ -573,13 +663,18 @@ router.post("/:bookingId/send", async (req, res, next) => {
               b.check_in_date, b.check_out_date, b.nights, b.total_price,
               b.invoice_id, b.sent_at,
               o.name AS organization_name, o.contact_email,
-              e.full_name AS employee_name, e.employee_code
+              e.full_name AS employee_name, e.employee_code,
+              hp.hotel_name,
+              hp.location AS hotel_location,
+              hp.logo_url AS hotel_logo_url
        FROM hotel_bookings b
        JOIN organizations o ON o.id = b.organization_id
        JOIN corporate_employees e ON e.id = b.employee_id
+       LEFT JOIN hotel_profiles hp ON hp.user_id::text = b.created_by
        WHERE b.id = $1
-       FOR UPDATE`,
-      [bookingId]
+         AND b.created_by = $2
+       FOR UPDATE OF b`,
+      [bookingId, userId]
     );
 
     if (bookingResult.rowCount === 0) {
@@ -588,6 +683,10 @@ router.post("/:bookingId/send", async (req, res, next) => {
     }
 
     const booking = bookingResult.rows[0];
+    const hotelDisplayName =
+      normalizeOptional(booking.hotel_name) ??
+      normalizeOptional(booking.hotel_location) ??
+      "Hotel";
 
     if (booking.invoice_id) {
       await client.query("ROLLBACK");
@@ -693,7 +792,7 @@ router.post("/:bookingId/send", async (req, res, next) => {
         booking.organization_id,
         booking.id,
         booking.employee_id,
-        "Grand Hotel & Resorts",
+        hotelDisplayName,
         booking.check_in_date,
         booking.check_out_date,
         booking.nights,
@@ -716,7 +815,7 @@ router.post("/:bookingId/send", async (req, res, next) => {
       guestName: booking.employee_name,
       amount: Number(invoice.amount),
       dueDate: invoice.due_date,
-      propertyName: "Grand Hotel & Resorts",
+      propertyName: hotelDisplayName,
       bills:
         dbBills.length > 0
           ? dbBills.map((bill) => ({

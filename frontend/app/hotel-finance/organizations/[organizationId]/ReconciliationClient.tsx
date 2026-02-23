@@ -4,6 +4,7 @@ import Header from '@/app/components/Header'
 import Sidebar from '@/app/components/Sidebar'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { tokenStorage } from '@/lib/auth'
 
 interface ReconciliationItem {
   id: string
@@ -86,7 +87,15 @@ export default function ReconciliationClient({ organizationId }: { organizationI
       setOrganizationError(null)
 
       try {
-        const response = await fetch(`${apiBaseUrl}/api/organizations/${organizationId}`)
+        const token = tokenStorage.get()
+        const response = await fetch(`${apiBaseUrl}/api/organizations/${organizationId}`, {
+          credentials: 'include',
+          headers: token
+            ? {
+                Authorization: `Bearer ${token}`
+              }
+            : undefined
+        })
         if (!response.ok) {
           throw new Error('Failed to fetch organization details')
         }

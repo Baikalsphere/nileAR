@@ -48,7 +48,8 @@ export default function InvoicesClient() {
 
   const filteredInvoices = invoicesData.filter(invoice => {
     const matchesSearch = invoice.invoiceNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         invoice.employeeName.toLowerCase().includes(searchQuery.toLowerCase())
+                         invoice.employeeName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                         (invoice.senderHotelName ?? '').toLowerCase().includes(searchQuery.toLowerCase())
     const matchesStatus = !statusFilter || invoice.status === statusFilter
     return matchesSearch && matchesStatus
   })
@@ -237,7 +238,7 @@ export default function InvoicesClient() {
                           <span className="text-sm font-medium text-slate-900 dark:text-white whitespace-nowrap">{invoice.employeeName}</span>
                         </td>
                         <td className="py-3 px-3">
-                          <span className="text-sm text-slate-600 dark:text-gray-300 whitespace-nowrap">{invoice.propertyName ?? 'Hotel Stay'}</span>
+                          <span className="text-sm text-slate-600 dark:text-gray-300 whitespace-nowrap">{invoice.senderHotelName ?? invoice.propertyName ?? 'Hotel Stay'}</span>
                         </td>
                         <td className="py-3 px-3 text-sm text-slate-500 dark:text-gray-400 tabular-nums whitespace-nowrap">{new Date(invoice.invoiceDate).toLocaleDateString()}</td>
                         <td className="py-3 px-3 text-sm tabular-nums whitespace-nowrap">

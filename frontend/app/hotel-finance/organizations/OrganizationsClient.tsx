@@ -4,6 +4,8 @@ import Header from '@/app/components/Header'
 import Sidebar from '@/app/components/Sidebar'
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import { tokenStorage } from '@/lib/auth'
 
 type OrganizationStatus = 'active' | 'on-hold' | 'inactive'
 
@@ -39,6 +41,18 @@ interface GeneratedCredentials {
   password: string
   email: string
   organizationName: string
+}
+
+interface ExistingOrganizationLookup {
+  id: string
+  name: string
+  gst: string | null
+  creditPeriod: string | null
+  paymentTerms: string | null
+  status: OrganizationStatus
+  corporateEmail: string
+  corporateUserId: string
+  isLinked: boolean
 }
 
 const apiBaseUrl =
@@ -190,7 +204,8 @@ const toOrganization = (apiOrg: ApiOrganization): Organization => {
 }
 
 export default function OrganizationsClient() {
-  const [organizations, setOrganizations] = useState<Organization[]>(seedOrganizations)
+  const router = useRouter()
+  const [organizations, setOrganizations] = useState<Organization[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
@@ -203,15 +218,104 @@ export default function OrganizationsClient() {
   const [registerStatus, setRegisterStatus] = useState<OrganizationStatus>('active')
   const [registerError, setRegisterError] = useState<string | null>(null)
   const [isRegistering, setIsRegistering] = useState(false)
+  const [isLinkingExisting, setIsLinkingExisting] = useState(false)
+  const [isCheckingExisting, setIsCheckingExisting] = useState(false)
+  const [existingOrganization, setExistingOrganization] = useState<ExistingOrganizationLookup | null>(null)
   const [generatedCredentials, setGeneratedCredentials] = useState<GeneratedCredentials | null>(null)
   const [isSendingCredentials, setIsSendingCredentials] = useState(false)
   const [sendCredentialsMessage, setSendCredentialsMessage] = useState<string | null>(null)
   const [sendCredentialsError, setSendCredentialsError] = useState<string | null>(null)
 
+  const getAuthHeaders = () => {
+    const token = tokenStorage.get()
+    if (!token) {
+      throw new Error('Unauthorized')
+    }
+
+    return {
+      Authorization: `Bearer ${token}`
+    }
+  }
+
   useEffect(() => {
+    const token = tokenStorage.get()
+    if (!token) {
+      router.replace('/hotel-finance/login')
+      return
+    }
+
+    const email = corporateEmail.trim().toLowerCase()
+    const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+
+    if (!isValidEmail) {
+      setExistingOrganization(null)
+      setIsCheckingExisting(false)
+      return
+    }
+
+    const timeoutId = window.setTimeout(async () => {
+      setIsCheckingExisting(true)
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/organizations/lookup?corporateEmail=${encodeURIComponent(email)}`, {
+          credentials: 'include',
+          headers: {
+            ...getAuthHeaders()
+          }
+        })
+
+        if (!response.ok) {
+          throw new Error('Failed to check existing organization')
+        }
+
+        const data = (await response.json()) as {
+          found: boolean
+          organization?: ExistingOrganizationLookup
+        }
+
+        if (data.found && data.organization) {
+          setExistingOrganization(data.organization)
+          setOrganizationName(data.organization.name)
+          setGst(data.organization.gst ?? '')
+          setCreditPeriod(data.organization.creditPeriod ?? '')
+          setPaymentTerms(data.organization.paymentTerms ?? '')
+          setRegisterStatus(data.organization.status)
+        } else {
+          setExistingOrganization(null)
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to check existing organization'
+        if (message.toLowerCase().includes('unauthorized')) {
+          tokenStorage.clear()
+          router.replace('/hotel-finance/login')
+          return
+        }
+
+        setExistingOrganization(null)
+      } finally {
+        setIsCheckingExisting(false)
+      }
+    }, 450)
+
+    return () => {
+      window.clearTimeout(timeoutId)
+    }
+  }, [corporateEmail, router])
+
+  useEffect(() => {
+    const token = tokenStorage.get()
+    if (!token) {
+      router.replace('/hotel-finance/login')
+      return
+    }
+
     const loadOrganizations = async () => {
       try {
-        const response = await fetch(`${apiBaseUrl}/api/organizations`, { credentials: 'include' })
+        const response = await fetch(`${apiBaseUrl}/api/organizations`, {
+          credentials: 'include',
+          headers: {
+            ...getAuthHeaders()
+          }
+        })
         if (!response.ok) {
           throw new Error('Failed to fetch organizations')
         }
@@ -219,16 +323,25 @@ export default function OrganizationsClient() {
         const data = (await response.json()) as { organizations?: ApiOrganization[] }
         if (data.organizations && data.organizations.length > 0) {
           setOrganizations(data.organizations.map(toOrganization))
+        } else {
+          setOrganizations([])
         }
-      } catch {
-        setOrganizations(seedOrganizations)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to fetch organizations'
+        if (message.toLowerCase().includes('unauthorized')) {
+          tokenStorage.clear()
+          router.replace('/hotel-finance/login')
+          return
+        }
+
+        setOrganizations([])
       } finally {
         setIsLoading(false)
       }
     }
 
     void loadOrganizations()
-  }, [])
+  }, [router])
 
   const filteredOrganizations = useMemo(() => organizations.filter(org => {
     const matchesSearch = org.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -242,6 +355,66 @@ export default function OrganizationsClient() {
     setGeneratedCredentials(null)
     setSendCredentialsMessage(null)
     setSendCredentialsError(null)
+    if (existingOrganization && !existingOrganization.isLinked) {
+      setIsLinkingExisting(true)
+
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/organizations/link-existing`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            ...getAuthHeaders()
+          },
+          body: JSON.stringify({ organizationId: existingOrganization.id })
+        })
+
+        const data = (await response.json()) as {
+          organization?: ApiOrganization
+          error?: { message?: string }
+        }
+
+        if (!response.ok || !data.organization) {
+          throw new Error(data.error?.message ?? 'Unable to add existing organization')
+        }
+
+        setOrganizations((current) => {
+          const alreadyPresent = current.some((org) => org.id === data.organization?.id)
+          if (alreadyPresent) {
+            return current
+          }
+
+          return [toOrganization(data.organization as ApiOrganization), ...current]
+        })
+
+        setGeneratedCredentials(null)
+        setSendCredentialsMessage(null)
+        setSendCredentialsError(null)
+        setRegisterError(null)
+        setShowRegisterModal(false)
+        setOrganizationName('')
+        setCorporateEmail('')
+        setGst('')
+        setCreditPeriod('30 Days')
+        setPaymentTerms('Net 30')
+        setRegisterStatus('active')
+        setExistingOrganization(null)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unable to add existing organization'
+        if (message.toLowerCase().includes('unauthorized')) {
+          tokenStorage.clear()
+          router.replace('/hotel-finance/login')
+          return
+        }
+
+        setRegisterError(message)
+      } finally {
+        setIsLinkingExisting(false)
+      }
+
+      return
+    }
+
     setIsRegistering(true)
 
     try {
@@ -249,7 +422,8 @@ export default function OrganizationsClient() {
         method: 'POST',
         credentials: 'include',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          ...getAuthHeaders()
         },
         body: JSON.stringify({
           name: organizationName,
@@ -285,7 +459,14 @@ export default function OrganizationsClient() {
       setPaymentTerms('Net 30')
       setRegisterStatus('active')
     } catch (error) {
-      setRegisterError(error instanceof Error ? error.message : 'Unable to create organization')
+      const message = error instanceof Error ? error.message : 'Unable to create organization'
+      if (message.toLowerCase().includes('unauthorized')) {
+        tokenStorage.clear()
+        router.replace('/hotel-finance/login')
+        return
+      }
+
+      setRegisterError(message)
     } finally {
       setIsRegistering(false)
     }
@@ -305,7 +486,8 @@ export default function OrganizationsClient() {
         method: 'POST',
         credentials: 'include',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          ...getAuthHeaders()
         },
         body: JSON.stringify({
           recipientEmail: generatedCredentials.email,
@@ -322,7 +504,14 @@ export default function OrganizationsClient() {
 
       setSendCredentialsMessage(`Credentials sent to ${generatedCredentials.email}`)
     } catch (error) {
-      setSendCredentialsError(error instanceof Error ? error.message : 'Unable to send credentials email')
+      const message = error instanceof Error ? error.message : 'Unable to send credentials email'
+      if (message.toLowerCase().includes('unauthorized')) {
+        tokenStorage.clear()
+        router.replace('/hotel-finance/login')
+        return
+      }
+
+      setSendCredentialsError(message)
     } finally {
       setIsSendingCredentials(false)
     }
@@ -337,6 +526,14 @@ export default function OrganizationsClient() {
     setGeneratedCredentials(null)
     setSendCredentialsMessage(null)
     setSendCredentialsError(null)
+    setExistingOrganization(null)
+    setIsCheckingExisting(false)
+    setOrganizationName('')
+    setCorporateEmail('')
+    setGst('')
+    setCreditPeriod('30 Days')
+    setPaymentTerms('Net 30')
+    setRegisterStatus('active')
   }
 
   return (
@@ -530,7 +727,8 @@ export default function OrganizationsClient() {
                       <input
                         value={organizationName}
                         onChange={(event) => setOrganizationName(event.target.value)}
-                        required
+                        required={!existingOrganization}
+                        disabled={Boolean(existingOrganization)}
                         className="w-full rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                         placeholder="Example Corp Pvt Ltd"
                       />
@@ -545,13 +743,38 @@ export default function OrganizationsClient() {
                         className="w-full rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                         placeholder="corp@example.com"
                       />
+                      <div className="mt-1 min-h-[18px]">
+                        {isCheckingExisting && (
+                          <p className="text-xs text-slate-500 dark:text-slate-400">Checking existing organization...</p>
+                        )}
+                        {!isCheckingExisting && existingOrganization && (
+                          <p className="text-xs font-medium text-blue-700 dark:text-blue-300">
+                            Existing organization found for this email.
+                          </p>
+                        )}
+                      </div>
                     </div>
+
+                    {existingOrganization && (
+                      <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-200">
+                        <p className="font-semibold">Existing Organization</p>
+                        <p className="mt-1">Name: <span className="font-medium">{existingOrganization.name}</span></p>
+                        <p className="mt-1">GST: <span className="font-medium">{existingOrganization.gst ?? '-'}</span></p>
+                        <p className="mt-1">Credit Period: <span className="font-medium">{existingOrganization.creditPeriod ?? '-'}</span></p>
+                        <p className="mt-1">Payment Terms: <span className="font-medium">{existingOrganization.paymentTerms ?? '-'}</span></p>
+                        <p className="mt-1">Status: <span className="font-medium capitalize">{existingOrganization.status}</span></p>
+                        {existingOrganization.isLinked && (
+                          <p className="mt-2 text-emerald-700 dark:text-emerald-300 font-medium">This organization is already added to your hotel.</p>
+                        )}
+                      </div>
+                    )}
                     <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                       <div>
                         <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">GST</label>
                         <input
                           value={gst}
                           onChange={(event) => setGst(event.target.value)}
+                          disabled={Boolean(existingOrganization)}
                           className="w-full rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                           placeholder="27AAAAA0000A1Z5"
                         />
@@ -561,6 +784,7 @@ export default function OrganizationsClient() {
                         <select
                           value={registerStatus}
                           onChange={(event) => setRegisterStatus(event.target.value as OrganizationStatus)}
+                          disabled={Boolean(existingOrganization)}
                           className="w-full rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                         >
                           <option value="active">Active</option>
@@ -575,6 +799,7 @@ export default function OrganizationsClient() {
                         <input
                           value={creditPeriod}
                           onChange={(event) => setCreditPeriod(event.target.value)}
+                          disabled={Boolean(existingOrganization)}
                           className="w-full rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                           placeholder="30 Days"
                         />
@@ -584,6 +809,7 @@ export default function OrganizationsClient() {
                         <input
                           value={paymentTerms}
                           onChange={(event) => setPaymentTerms(event.target.value)}
+                          disabled={Boolean(existingOrganization)}
                           className="w-full rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                           placeholder="Net 30"
                         />
@@ -631,10 +857,14 @@ export default function OrganizationsClient() {
                       </button>
                       <button
                         type="submit"
-                        disabled={isRegistering}
+                        disabled={isRegistering || isLinkingExisting || (existingOrganization?.isLinked ?? false)}
                         className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-blue-600 disabled:opacity-70"
                       >
-                        {isRegistering ? 'Creating...' : 'Create Organization'}
+                        {existingOrganization
+                          ? existingOrganization.isLinked
+                            ? 'Already Added'
+                            : (isLinkingExisting ? 'Adding...' : 'Add Existing Organization')
+                          : (isRegistering ? 'Creating...' : 'Create Organization')}
                       </button>
                     </div>
                   </form>

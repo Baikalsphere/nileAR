@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import ContractTemplate, { ContractData } from '@/app/hotel-finance/organizations/[organizationId]/contract/ContractTemplate'
 
 const apiBaseUrl =
   process.env.NEXT_PUBLIC_API_URL ??
@@ -17,8 +16,19 @@ interface SignableContract {
   id: string
   organizationId: string
   organizationName: string
+  organizationGst?: string | null
+  organizationCreditPeriod?: string | null
+  organizationPaymentTerms?: string | null
+  organizationRegistrationNumber?: string | null
+  organizationRegisteredAddress?: string | null
+  organizationContactEmail?: string | null
+  organizationContactPhone?: string | null
+  organizationContactPerson?: string | null
+  organizationBillingAddress?: string | null
+  organizationPanCard?: string | null
   status: 'draft' | 'sent' | 'signed'
-  contractData: ContractData
+  contractData: Record<string, unknown>
+  pdfUrl?: string | null
   signedBy?: string | null
   signedDesignation?: string | null
   signatureDataUrl?: string | null
@@ -32,6 +42,7 @@ export default function CorporateContractSignClient({ token }: CorporateContract
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isSubmitted, setIsSubmitted] = useState(false)
   const [accepted, setAccepted] = useState(false)
+  const [contractPdfBlobUrl, setContractPdfBlobUrl] = useState<string | null>(null)
   const [formData, setFormData] = useState({
     acceptedBy: '',
     designation: ''
@@ -40,6 +51,26 @@ export default function CorporateContractSignClient({ token }: CorporateContract
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [isDrawing, setIsDrawing] = useState(false)
   const [hasSignature, setHasSignature] = useState(false)
+
+  const loadContractPdfPreview = async (pdfUrl: string) => {
+    try {
+      const response = await fetch(`${apiBaseUrl}${pdfUrl}`)
+      if (!response.ok) {
+        throw new Error('Unable to load contract PDF')
+      }
+
+      const blob = await response.blob()
+      const blobUrl = URL.createObjectURL(blob)
+      setContractPdfBlobUrl((current) => {
+        if (current) {
+          URL.revokeObjectURL(current)
+        }
+        return blobUrl
+      })
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to load contract PDF')
+    }
+  }
 
   useEffect(() => {
     const loadContract = async () => {
@@ -61,6 +92,9 @@ export default function CorporateContractSignClient({ token }: CorporateContract
         }
 
         setContract(data.contract)
+        if (data.contract.pdfUrl) {
+          await loadContractPdfPreview(data.contract.pdfUrl)
+        }
       } catch (error) {
         setErrorMessage(error instanceof Error ? error.message : 'Unable to load contract')
       } finally {
@@ -70,6 +104,14 @@ export default function CorporateContractSignClient({ token }: CorporateContract
 
     void loadContract()
   }, [token])
+
+  useEffect(() => {
+    return () => {
+      if (contractPdfBlobUrl) {
+        URL.revokeObjectURL(contractPdfBlobUrl)
+      }
+    }
+  }, [contractPdfBlobUrl])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -257,8 +299,82 @@ export default function CorporateContractSignClient({ token }: CorporateContract
         )}
 
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-          <div className="max-h-[650px] overflow-y-auto p-6">
-            <ContractTemplate data={contract.contractData} showSignature={false} />
+          {contractPdfBlobUrl ? (
+            <iframe
+              src={contractPdfBlobUrl}
+              title="Contract PDF"
+              className="w-full min-h-[760px]"
+            />
+          ) : (
+            <div className="p-6 text-sm text-slate-600">
+              Contract PDF is not available.
+            </div>
+          )}
+        </div>
+
+        <div className="bg-white rounded-xl border border-slate-200 p-6">
+          <h2 className="text-lg font-semibold text-slate-900 mb-4">Organization Details</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+            {contract.organizationName && (
+              <div>
+                <p className="text-slate-600 font-medium">Company Name</p>
+                <p className="text-slate-900">{contract.organizationName}</p>
+              </div>
+            )}
+            {contract.organizationContactPerson && (
+              <div>
+                <p className="text-slate-600 font-medium">Contact Person</p>
+                <p className="text-slate-900">{contract.organizationContactPerson}</p>
+              </div>
+            )}
+            {contract.organizationContactEmail && (
+              <div>
+                <p className="text-slate-600 font-medium">Email</p>
+                <p className="text-slate-900">{contract.organizationContactEmail}</p>
+              </div>
+            )}
+            {contract.organizationContactPhone && (
+              <div>
+                <p className="text-slate-600 font-medium">Phone</p>
+                <p className="text-slate-900">{contract.organizationContactPhone}</p>
+              </div>
+            )}
+            {contract.organizationGst && (
+              <div>
+                <p className="text-slate-600 font-medium">GST Number</p>
+                <p className="text-slate-900">{contract.organizationGst}</p>
+              </div>
+            )}
+            {contract.organizationPanCard && (
+              <div>
+                <p className="text-slate-600 font-medium">PAN Card</p>
+                <p className="text-slate-900">{contract.organizationPanCard}</p>
+              </div>
+            )}
+            {contract.organizationRegisteredAddress && (
+              <div className="md:col-span-2">
+                <p className="text-slate-600 font-medium">Registered Address</p>
+                <p className="text-slate-900">{contract.organizationRegisteredAddress}</p>
+              </div>
+            )}
+            {contract.organizationBillingAddress && (
+              <div className="md:col-span-2">
+                <p className="text-slate-600 font-medium">Billing Address</p>
+                <p className="text-slate-900">{contract.organizationBillingAddress}</p>
+              </div>
+            )}
+            {contract.organizationCreditPeriod && (
+              <div>
+                <p className="text-slate-600 font-medium">Credit Period</p>
+                <p className="text-slate-900">{contract.organizationCreditPeriod}</p>
+              </div>
+            )}
+            {contract.organizationPaymentTerms && (
+              <div>
+                <p className="text-slate-600 font-medium">Payment Terms</p>
+                <p className="text-slate-900">{contract.organizationPaymentTerms}</p>
+              </div>
+            )}
           </div>
         </div>
 

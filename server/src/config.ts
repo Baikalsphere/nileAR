@@ -39,10 +39,25 @@ if (!parsed.success) {
 const env = parsed.data;
 const corsOrigins = env.CORS_ORIGINS.split(",").map((origin) => origin.trim()).filter(Boolean);
 
+const normalizeDatabaseUrl = (databaseUrl: string) => {
+  try {
+    const parsedUrl = new URL(databaseUrl);
+    const sslMode = parsedUrl.searchParams.get("sslmode")?.toLowerCase();
+
+    if (sslMode === "prefer" || sslMode === "require" || sslMode === "verify-ca") {
+      parsedUrl.searchParams.set("sslmode", "verify-full");
+    }
+
+    return parsedUrl.toString();
+  } catch {
+    return databaseUrl.replace(/([?&]sslmode=)(prefer|require|verify-ca)(?=(&|$))/i, "$1verify-full");
+  }
+};
+
 export const config = {
   nodeEnv: env.NODE_ENV,
   port: env.PORT,
-  databaseUrl: env.DATABASE_URL,
+  databaseUrl: normalizeDatabaseUrl(env.DATABASE_URL),
   dbSsl: env.DB_SSL === "true",
   jwtAccessSecret: env.JWT_ACCESS_SECRET,
   jwtRefreshSecret: env.JWT_REFRESH_SECRET,

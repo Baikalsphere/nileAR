@@ -4,7 +4,8 @@ import Header from '@/app/components/Header'
 import Sidebar from '@/app/components/Sidebar'
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import ContractTemplate, { ContractData } from './ContractTemplate'
+import { ContractData } from './ContractTemplate'
+import { tokenStorage } from '@/lib/auth'
 
 interface ContractClientProps {
   organizationId: string
@@ -14,6 +15,18 @@ const apiBaseUrl =
   process.env.NEXT_PUBLIC_API_URL ??
   process.env.NEXT_PUBLIC_API_BASE_URL ??
   'http://localhost:4000'
+
+const withAlternateLocalhost = (url: string) => {
+  if (url.includes('localhost')) {
+    return url.replace('localhost', '127.0.0.1')
+  }
+
+  if (url.includes('127.0.0.1')) {
+    return url.replace('127.0.0.1', 'localhost')
+  }
+
+  return null
+}
 
 interface OrganizationDetails {
   id: string
@@ -31,6 +44,7 @@ interface ContractRecord {
   id: string
   status: 'draft' | 'sent' | 'signed'
   contractData: ContractData
+  pdfUrl?: string | null
   signedBy?: string | null
   signedDesignation?: string | null
   signatureDataUrl?: string | null
@@ -102,6 +116,8 @@ export default function ContractClient({ organizationId }: ContractClientProps) 
   const [contractData, setContractData] = useState<ContractData>(defaultContractData(organizationId))
   const [contractId, setContractId] = useState<string | null>(null)
   const [contractStatus, setContractStatus] = useState<'draft' | 'sent' | 'signed'>('draft')
+  const [contractPdfUrl, setContractPdfUrl] = useState<string | null>(null)
+  const [contractPdfBlobUrl, setContractPdfBlobUrl] = useState<string | null>(null)
   const [signedDetails, setSignedDetails] = useState<{
     acceptedBy?: string | null
     designation?: string | null
@@ -115,6 +131,17 @@ export default function ContractClient({ organizationId }: ContractClientProps) 
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [shareableLink, setShareableLink] = useState('')
 
+  const getAuthHeaders = () => {
+    const token = tokenStorage.get()
+    if (!token) {
+      throw new Error('Unauthorized')
+    }
+
+    return {
+      Authorization: `Bearer ${token}`
+    }
+  }
+
   const signatureLabel = useMemo(() => {
     if (contractStatus === 'signed') return 'Signed'
     if (contractStatus === 'sent') return 'Pending'
@@ -122,52 +149,129 @@ export default function ContractClient({ organizationId }: ContractClientProps) 
   }, [contractStatus])
 
   useEffect(() => {
-    const load = async () => {
-      setIsLoading(true)
-      setErrorMessage(null)
-
-      try {
-        const orgResponse = await fetch(`${apiBaseUrl}/api/organizations/${organizationId}`, { credentials: 'include' })
-        if (!orgResponse.ok) {
-          throw new Error('Unable to load organization details')
-        }
-
-        const orgData = (await orgResponse.json()) as { organization: OrganizationDetails }
-        const organization = orgData.organization
-
-        setContractData((current) => ({
-          ...current,
-          organizationName: organization.name,
-          contactPerson: organization.contactPerson ?? '',
-          companyAddress: organization.registeredAddress ?? '',
-          billingAddress: organization.billingAddress ?? organization.registeredAddress ?? '',
-          mobile: organization.contactPhone ?? '',
-          email: organization.contactEmail ?? '',
-          gstNumber: organization.gst ?? '',
-          panCard: organization.panCard ?? ''
-        }))
-
-        const latestResponse = await fetch(`${apiBaseUrl}/api/organizations/${organizationId}/contracts/latest`, { credentials: 'include' })
-        if (latestResponse.ok) {
-          const latestData = (await latestResponse.json()) as { contract: ContractRecord }
-          setContractId(latestData.contract.id)
-          setContractStatus(latestData.contract.status)
-          setContractData(latestData.contract.contractData)
-          setSignedDetails({
-            acceptedBy: latestData.contract.signedBy,
-            designation: latestData.contract.signedDesignation,
-            signedAt: latestData.contract.signedAt,
-            signatureDataUrl: latestData.contract.signatureDataUrl
-          })
-          setIsConfiguring(false)
-        }
-      } catch (error) {
-        setErrorMessage(error instanceof Error ? error.message : 'Unable to load contract data')
-      } finally {
-        setIsLoading(false)
+    return () => {
+      if (contractPdfBlobUrl) {
+        URL.revokeObjectURL(contractPdfBlobUrl)
       }
     }
+  }, [contractPdfBlobUrl])
 
+  const loadContractPdfPreview = async (pdfUrl: string) => {
+    try {
+      const requestUrl = pdfUrl.startsWith('http://') || pdfUrl.startsWith('https://')
+        ? pdfUrl
+        : `${apiBaseUrl}${pdfUrl}`
+
+      let response: Response
+
+      try {
+        response = await fetch(requestUrl, {
+          headers: {
+            ...getAuthHeaders()
+          }
+        })
+      } catch (error) {
+        const alternateUrl = withAlternateLocalhost(requestUrl)
+        if (!(error instanceof TypeError) || !alternateUrl) {
+          throw error
+        }
+
+        response = await fetch(alternateUrl, {
+          headers: {
+            ...getAuthHeaders()
+          }
+        })
+      }
+
+      if (!response.ok) {
+        throw new Error('Unable to load generated contract PDF')
+      }
+
+      const blob = await response.blob()
+      const blobUrl = URL.createObjectURL(blob)
+      setContractPdfBlobUrl((current) => {
+        if (current) {
+          URL.revokeObjectURL(current)
+        }
+        return blobUrl
+      })
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to load generated contract PDF')
+    }
+  }
+
+  const directPdfHref = contractPdfBlobUrl ?? (contractPdfUrl ? `${apiBaseUrl}${contractPdfUrl}` : null)
+
+  useEffect(() => {
+    return () => {
+      if (contractPdfBlobUrl) {
+        URL.revokeObjectURL(contractPdfBlobUrl)
+      }
+    }
+  }, [contractPdfBlobUrl])
+
+  const load = async () => {
+    setIsLoading(true)
+    setErrorMessage(null)
+
+    try {
+      const orgResponse = await fetch(`${apiBaseUrl}/api/organizations/${organizationId}`, {
+        credentials: 'include',
+        headers: {
+          ...getAuthHeaders()
+        }
+      })
+
+      if (!orgResponse.ok) {
+        throw new Error('Unable to load organization details')
+      }
+
+      const orgData = (await orgResponse.json()) as { organization: OrganizationDetails }
+      const organization = orgData.organization
+
+      setContractData((current) => ({
+        ...current,
+        organizationName: organization.name,
+        contactPerson: organization.contactPerson ?? '',
+        companyAddress: organization.registeredAddress ?? '',
+        billingAddress: organization.billingAddress ?? organization.registeredAddress ?? '',
+        mobile: organization.contactPhone ?? '',
+        email: organization.contactEmail ?? '',
+        gstNumber: organization.gst ?? '',
+        panCard: organization.panCard ?? ''
+      }))
+
+      const latestResponse = await fetch(`${apiBaseUrl}/api/organizations/${organizationId}/contracts/latest`, {
+        credentials: 'include',
+        headers: {
+          ...getAuthHeaders()
+        }
+      })
+      if (latestResponse.ok) {
+        const latestData = (await latestResponse.json()) as { contract: ContractRecord }
+        setContractId(latestData.contract.id)
+        setContractStatus(latestData.contract.status)
+        setContractData(latestData.contract.contractData)
+        setContractPdfUrl(latestData.contract.pdfUrl ?? null)
+        if (latestData.contract.pdfUrl) {
+          await loadContractPdfPreview(latestData.contract.pdfUrl)
+        }
+        setSignedDetails({
+          acceptedBy: latestData.contract.signedBy,
+          designation: latestData.contract.signedDesignation,
+          signedAt: latestData.contract.signedAt,
+          signatureDataUrl: latestData.contract.signatureDataUrl
+        })
+        setIsConfiguring(false)
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to load contract data')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  useEffect(() => {
     void load()
   }, [organizationId])
 
@@ -181,13 +285,19 @@ export default function ContractClient({ organizationId }: ContractClientProps) 
         method: 'POST',
         credentials: 'include',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          ...getAuthHeaders()
         },
         body: JSON.stringify({ contractData })
       })
 
       const data = (await response.json()) as {
-        contract?: { id: string; status: 'draft' | 'sent' | 'signed' }
+        contract?: {
+          id: string
+          status: 'draft' | 'sent' | 'signed'
+          contractData?: ContractData
+          pdfUrl?: string | null
+        }
         error?: { message?: string }
       }
 
@@ -197,6 +307,12 @@ export default function ContractClient({ organizationId }: ContractClientProps) 
 
       setContractId(data.contract.id)
       setContractStatus(data.contract.status)
+      if (data.contract.contractData) {
+        setContractData(data.contract.contractData)
+      }
+      const nextPdfUrl = data.contract.pdfUrl ?? `/api/organizations/${organizationId}/contracts/${data.contract.id}/pdf`
+      setContractPdfUrl(nextPdfUrl)
+      await loadContractPdfPreview(nextPdfUrl)
       setStatusMessage('Contract generated and saved. PDF preview is ready.')
       return data.contract.id
     } catch (error) {
@@ -227,7 +343,8 @@ export default function ContractClient({ organizationId }: ContractClientProps) 
         method: 'POST',
         credentials: 'include',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          ...getAuthHeaders()
         },
         body: JSON.stringify({
           recipientEmail: contractData.email || undefined,
@@ -487,6 +604,18 @@ export default function ContractClient({ organizationId }: ContractClientProps) 
         {!isConfiguring && (
           <div className="flex-1 overflow-y-auto">
             <div className="max-w-6xl mx-auto p-4 md:p-6 lg:p-8">
+              {/* Status Messages */}
+              {errorMessage && (
+                <div className="mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+                  <p className="text-sm text-red-800 dark:text-red-200">{errorMessage}</p>
+                </div>
+              )}
+              {statusMessage && (
+                <div className="mb-4 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
+                  <p className="text-sm text-green-800 dark:text-green-200">{statusMessage}</p>
+                </div>
+              )}
+
               <div className="mb-4 flex items-center justify-between gap-3">
                 <Link
                   href={`/hotel-finance/organizations/${organizationId}`}
@@ -495,23 +624,209 @@ export default function ContractClient({ organizationId }: ContractClientProps) 
                   <span className="material-symbols-outlined text-[18px]">arrow_back</span>
                   <span>Back</span>
                 </Link>
-                <button
-                  onClick={() => window.print()}
-                  className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm font-medium"
-                >
-                  <span className="material-symbols-outlined text-[18px]">print</span>
-                  <span>Print</span>
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => window.print()}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm font-medium"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">print</span>
+                    <span>Print</span>
+                  </button>
+                  {directPdfHref && (
+                    <a
+                      href={directPdfHref}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-800 text-white rounded-lg transition-colors text-sm font-medium"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">open_in_new</span>
+                      <span>PDF</span>
+                    </a>
+                  )}
+                </div>
               </div>
 
-              <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
-                <ContractTemplate
-                  data={contractData}
-                  showSignature={true}
-                  isPreview={false}
-                  signedDetails={signedDetails ?? undefined}
-                />
+              {/* Contract Details Section */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+                {/* Hotel Details */}
+                <div className="bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-4">
+                  <h3 className="font-semibold text-slate-900 dark:text-white mb-3 flex items-center gap-2">
+                    <span className="material-symbols-outlined text-[20px]">apartment</span>
+                    Hotel Details
+                  </h3>
+                  <div className="space-y-2 text-sm">
+                    <div>
+                      <p className="text-slate-600 dark:text-slate-400">Name</p>
+                      <p className="font-medium text-slate-900 dark:text-white">{contractData.hotelName}</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-600 dark:text-slate-400">Location</p>
+                      <p className="font-medium text-slate-900 dark:text-white">{contractData.hotelLocation}</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-600 dark:text-slate-400">Check-in</p>
+                      <p className="font-medium text-slate-900 dark:text-white">{contractData.checkInTime}</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-600 dark:text-slate-400">Check-out</p>
+                      <p className="font-medium text-slate-900 dark:text-white">{contractData.checkOutTime}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Organization Details */}
+                <div className="bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-4">
+                  <h3 className="font-semibold text-slate-900 dark:text-white mb-3 flex items-center gap-2">
+                    <span className="material-symbols-outlined text-[20px]">business</span>
+                    Organization
+                  </h3>
+                  <div className="space-y-2 text-sm">
+                    <div>
+                      <p className="text-slate-600 dark:text-slate-400">Company</p>
+                      <p className="font-medium text-slate-900 dark:text-white">{contractData.organizationName}</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-600 dark:text-slate-400">Contact Person</p>
+                      <p className="font-medium text-slate-900 dark:text-white">{contractData.contactPerson || '-'}</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-600 dark:text-slate-400">GST</p>
+                      <p className="font-medium text-slate-900 dark:text-white">{contractData.gstNumber || '-'}</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-600 dark:text-slate-400">Email</p>
+                      <p className="font-medium text-slate-900 dark:text-white text-xs">{contractData.email}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Contract Status */}
+                <div className="bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-4">
+                  <h3 className="font-semibold text-slate-900 dark:text-white mb-3 flex items-center gap-2">
+                    <span className="material-symbols-outlined text-[20px]">assignment</span>
+                    Contract Status
+                  </h3>
+                  <div className="space-y-3">
+                    <div>
+                      <p className="text-slate-600 dark:text-slate-400 text-sm">Status</p>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className={`inline-flex px-3 py-1 rounded-full text-xs font-medium ${
+                          contractStatus === 'signed' ? 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200' :
+                          contractStatus === 'sent' ? 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200' :
+                          'bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200'
+                        }`}>
+                          {contractStatus === 'signed' ? 'Signed' : contractStatus === 'sent' ? 'Sent for Signature' : 'Draft'}
+                        </span>
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-slate-600 dark:text-slate-400 text-sm">Signature Verification</p>
+                      <div className="mt-1">
+                        {contractStatus === 'signed' ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">
+                            <span className="material-symbols-outlined text-[14px]">verified</span>
+                            Digitally Signed
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+                            <span className="material-symbols-outlined text-[14px]">pending</span>
+                            Awaiting Signature
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {contractStatus === 'signed' && signedDetails?.acceptedBy && (
+                      <div>
+                        <p className="text-slate-600 dark:text-slate-400 text-sm">Signed By</p>
+                        <p className="font-medium text-slate-900 dark:text-white mt-1">{signedDetails.acceptedBy}</p>
+                        {signedDetails.designation && (
+                          <p className="text-xs text-slate-600 dark:text-slate-400">{signedDetails.designation}</p>
+                        )}
+                        {signedDetails.signedAt && (
+                          <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+                            {new Date(signedDetails.signedAt).toLocaleDateString()}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                    {contractStatus === 'signed' && (
+                      <div>
+                        <p className="text-slate-600 dark:text-slate-400 text-sm">Captured Signature</p>
+                        {signedDetails?.signatureDataUrl ? (
+                          <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-2 dark:border-slate-700 dark:bg-slate-800">
+                            <img
+                              src={signedDetails.signatureDataUrl}
+                              alt="Digital signature"
+                              className="h-16 w-full object-contain"
+                            />
+                          </div>
+                        ) : (
+                          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Signed, but signature image is not available.</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
+
+              {/* PDF Preview */}
+              <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden mb-6">
+                {contractPdfBlobUrl ? (
+                  <iframe
+                    src={contractPdfBlobUrl}
+                    title="Generated contract PDF"
+                    className="w-full min-h-[900px]"
+                  />
+                ) : (
+                  <div className="p-8 text-sm text-slate-600 dark:text-slate-300">
+                    Contract PDF preview is not available yet.
+                  </div>
+                )}
+              </div>
+
+              {/* Signing Link Section */}
+              {contractStatus !== 'signed' && (
+                <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-6 mb-6">
+                  <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
+                    <span className="material-symbols-outlined">mail</span>
+                    Send for Digital Signature
+                  </h3>
+                  
+                  <p className="text-sm text-slate-600 dark:text-slate-300 mb-4">
+                    Send this contract to <span className="font-medium text-slate-900 dark:text-white">{contractData.email}</span> for digital signature.
+                  </p>
+
+                  <button
+                    onClick={sendSignatureLink}
+                    disabled={isSendingLink}
+                    className="inline-flex items-center gap-2 px-6 py-3 bg-green-600 hover:bg-green-700 disabled:bg-slate-400 text-white rounded-lg transition-colors font-medium mb-4"
+                  >
+                    <span className="material-symbols-outlined">send</span>
+                    {isSendingLink ? 'Sending Link...' : 'Send Signing Link'}
+                  </button>
+
+                  {shareableLink && (
+                    <div className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-4 mt-4">
+                      <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-3">Signing Link Generated</p>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={shareableLink}
+                          readOnly
+                          className="flex-1 px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded text-sm text-slate-900 dark:text-white"
+                        />
+                        <button
+                          onClick={copyToClipboard}
+                          className="inline-flex items-center gap-2 px-4 py-2 bg-slate-600 hover:bg-slate-700 text-white rounded transition-colors text-sm font-medium"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">content_copy</span>
+                          Copy
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}
