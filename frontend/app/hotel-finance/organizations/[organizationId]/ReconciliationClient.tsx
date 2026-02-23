@@ -2,7 +2,7 @@
 
 import Header from '@/app/components/Header'
 import Sidebar from '@/app/components/Sidebar'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 
 interface ReconciliationItem {
@@ -31,67 +31,18 @@ interface Discrepancy {
 interface OrganizationData {
   id: string
   name: string
-  gst: string
-  creditPeriod: string
-  paymentTerms: string
+  gst: string | null
+  creditPeriod: string | null
+  paymentTerms: string | null
   status: string
-  contactPerson: string
-  email: string
+  contactPerson: string | null
+  email: string | null
 }
 
-// Mock data for organizations
-const organizationsData: Record<string, OrganizationData> = {
-  'ORG-001': {
-    id: 'ORG-001',
-    name: 'Acme Corp Hospitality',
-    gst: '27AAAAA0000A1Z5',
-    creditPeriod: '30 Days',
-    paymentTerms: 'Net 30',
-    status: 'active',
-    contactPerson: 'John Doe',
-    email: 'john@acmecorp.com'
-  },
-  'ORG-024': {
-    id: 'ORG-024',
-    name: 'Global Tech Solutions',
-    gst: '07BBBBB1111B2Y6',
-    creditPeriod: '45 Days',
-    paymentTerms: 'Net 45',
-    status: 'active',
-    contactPerson: 'Jane Smith',
-    email: 'jane@globaltech.com'
-  },
-  'ORG-052': {
-    id: 'ORG-052',
-    name: 'Zenith Travel Partners',
-    gst: '33CCCCC2222C3X7',
-    creditPeriod: '15 Days',
-    paymentTerms: 'Immediate',
-    status: 'on-hold',
-    contactPerson: 'Mike Johnson',
-    email: 'mike@zenithtravel.com'
-  },
-  'ORG-089': {
-    id: 'ORG-089',
-    name: 'Apex Logistics',
-    gst: '19DDDDD3333D4W8',
-    creditPeriod: '60 Days',
-    paymentTerms: 'Net 60',
-    status: 'active',
-    contactPerson: 'Sarah Connor',
-    email: 'sarah@apexlogistics.com'
-  },
-  'ORG-102': {
-    id: 'ORG-102',
-    name: 'Summit Events',
-    gst: '22EEEEE4444E5V9',
-    creditPeriod: '30 Days',
-    paymentTerms: 'Net 30',
-    status: 'active',
-    contactPerson: 'Robert Brown',
-    email: 'robert@summitevents.com'
-  }
-}
+const apiBaseUrl =
+  process.env.NEXT_PUBLIC_API_URL ??
+  process.env.NEXT_PUBLIC_API_BASE_URL ??
+  'http://localhost:4000'
 
 // Mock reconciliation data with more details
 const mockReconciliationData: Record<string, ReconciliationItem[]> = {
@@ -119,13 +70,38 @@ const mockDiscrepancies: Record<string, Discrepancy[]> = {
 }
 
 export default function ReconciliationClient({ organizationId }: { organizationId: string }) {
-  const org = organizationsData[organizationId] || organizationsData['ORG-001']
+  const [organization, setOrganization] = useState<OrganizationData | null>(null)
+  const [organizationLoading, setOrganizationLoading] = useState(true)
+  const [organizationError, setOrganizationError] = useState<string | null>(null)
   const items = mockReconciliationData[organizationId] || []
   const discrepancies = mockDiscrepancies[organizationId] || []
   
   const [filterStatus, setFilterStatus] = useState<'all' | 'matched' | 'unmatched' | 'partial'>('all')
   const [showResolveModal, setShowResolveModal] = useState(false)
   const [selectedDiscrepancy, setSelectedDiscrepancy] = useState<Discrepancy | null>(null)
+
+  useEffect(() => {
+    const loadOrganization = async () => {
+      setOrganizationLoading(true)
+      setOrganizationError(null)
+
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/organizations/${organizationId}`)
+        if (!response.ok) {
+          throw new Error('Failed to fetch organization details')
+        }
+
+        const data = await response.json()
+        setOrganization(data.organization as OrganizationData)
+      } catch (error) {
+        setOrganizationError(error instanceof Error ? error.message : 'Failed to fetch organization details')
+      } finally {
+        setOrganizationLoading(false)
+      }
+    }
+
+    void loadOrganization()
+  }, [organizationId])
 
   const invoices = items.filter(item => item.type === 'invoice')
   const payments = items.filter(item => item.type === 'payment')
@@ -167,6 +143,30 @@ export default function ReconciliationClient({ organizationId }: { organizationI
     }
   }
 
+  if (organizationLoading) {
+    return (
+      <div className="flex h-screen w-full overflow-hidden bg-background-light dark:bg-background-dark">
+        <Sidebar title="Hotel Finance" logoIcon="domain" />
+        <main className="flex-1 flex items-center justify-center text-slate-500 dark:text-slate-400">
+          Loading organization details...
+        </main>
+      </div>
+    )
+  }
+
+  if (organizationError || !organization) {
+    return (
+      <div className="flex h-screen w-full overflow-hidden bg-background-light dark:bg-background-dark">
+        <Sidebar title="Hotel Finance" logoIcon="domain" />
+        <main className="flex-1 flex items-center justify-center p-6">
+          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/30 dark:bg-red-900/10 dark:text-red-300">
+            {organizationError ?? 'Organization not found'}
+          </div>
+        </main>
+      </div>
+    )
+  }
+
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background-light dark:bg-background-dark">
       <Sidebar title="Hotel Finance" logoIcon="domain" />
@@ -190,24 +190,24 @@ export default function ReconciliationClient({ organizationId }: { organizationI
               <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
                 <div className="flex-1">
                   <div className="flex items-center gap-4 mb-3">
-                    <h1 className="text-slate-900 dark:text-white text-3xl font-extrabold">{org.name}</h1>
+                    <h1 className="text-slate-900 dark:text-white text-3xl font-extrabold">{organization.name}</h1>
                     <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400">
                       <span className="material-symbols-outlined text-[14px]">check_circle</span>
-                      {org.status === 'active' ? 'Active' : 'On Hold'}
+                      {organization.status === 'active' ? 'Active' : organization.status === 'inactive' ? 'Inactive' : 'On Hold'}
                     </span>
                   </div>
                   <div className="grid gap-2 text-sm text-slate-600 dark:text-slate-400">
                     <div className="flex items-center gap-2">
                       <span className="font-medium">GST:</span>
-                      <span className="font-mono">{org.gst}</span>
+                      <span className="font-mono">{organization.gst ?? '—'}</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="font-medium">Contact:</span>
-                      <span>{org.contactPerson}</span>
+                      <span>{organization.contactPerson ?? '—'}</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="font-medium">Email:</span>
-                      <span>{org.email}</span>
+                      <span>{organization.email ?? '—'}</span>
                     </div>
                   </div>
                 </div>
@@ -232,11 +232,11 @@ export default function ReconciliationClient({ organizationId }: { organizationI
               <div className="grid gap-4 sm:grid-cols-2 rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800">
                 <div>
                   <p className="text-xs font-semibold uppercase text-slate-600 dark:text-slate-400">Credit Period</p>
-                  <p className="text-lg font-bold text-slate-900 dark:text-white mt-1">{org.creditPeriod}</p>
+                  <p className="text-lg font-bold text-slate-900 dark:text-white mt-1">{organization.creditPeriod ?? '—'}</p>
                 </div>
                 <div>
                   <p className="text-xs font-semibold uppercase text-slate-600 dark:text-slate-400">Payment Terms</p>
-                  <p className="text-lg font-bold text-slate-900 dark:text-white mt-1">{org.paymentTerms}</p>
+                  <p className="text-lg font-bold text-slate-900 dark:text-white mt-1">{organization.paymentTerms ?? '—'}</p>
                 </div>
               </div>
             </div>

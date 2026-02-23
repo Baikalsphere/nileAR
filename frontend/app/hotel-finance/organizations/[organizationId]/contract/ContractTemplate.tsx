@@ -1,6 +1,6 @@
 "use client"
 
-interface RoomRate {
+export interface RoomRate {
   roomType: string
   inclusions: string
   singleOccupancy: {
@@ -17,7 +17,7 @@ interface RoomRate {
   }
 }
 
-interface ContractData {
+export interface ContractData {
   hotelName: string
   hotelLocation: string
   organizationName: string
@@ -39,13 +39,83 @@ interface ContractData {
   checkOutTime: string
 }
 
+interface SignedDetails {
+  acceptedBy?: string | null
+  designation?: string | null
+  signedAt?: string | null
+  signatureDataUrl?: string | null
+}
+
 interface ContractTemplateProps {
   data: ContractData
   showSignature?: boolean
   isPreview?: boolean
+  signedDetails?: SignedDetails
 }
 
-export default function ContractTemplate({ data, showSignature = true, isPreview = false }: ContractTemplateProps) {
+const policySections = [
+  {
+    title: 'THE ABOVE RATES INCLUDE',
+    points: [
+      'Buffet Breakfast at “Waves”, our multi-cuisine All Day Dining Coffee Shop',
+      'Complimentary Wi-Fi Internet in Guest Rooms',
+      'Complimentary Wireless Internet in all Public Areas',
+      'Exclusive usage of swimming pool & gymnasium',
+      'Extra Person/Third Person will be charged @ INR 1,500 + Taxes per person per night'
+    ]
+  },
+  {
+    title: 'TERMS & CONDITIONS',
+    points: [
+      'The Hotel reserves the right to change or amend the published and/or corporate rates by providing at least 14 days advance notice.',
+      'The special corporate offer is net non-commissionable.',
+      'Rooms shall have to be guaranteed by deposit, correspondence or credit card.',
+      'Complimentary stay for child under 08 years old sharing room with parents without the extra bed.',
+      'Room booking received through a travel agent shall not be entitled to the corporate rate.',
+      'To avail the special corporate rates, an acceptance letter from your end is essential.'
+    ]
+  },
+  {
+    title: 'DEPOSIT & PAYMENT POLICY',
+    points: [
+      'All reservations will require a one-night room deposit or credit card guarantee in order to confirm the booking. We accept all major international Credit Cards.',
+      'In case of delay in payment, interest at 18% will be payable to Radisson Hotel Kandla for the period of delay, till the amounts are realized.',
+      'Payment to be done within 7 days of presenting bills to the company. The credit facility will be stopped immediately once the credit limit exceeds INR 50000/-.'
+    ]
+  },
+  {
+    title: 'CANCELLATION POLICY',
+    points: [
+      'Confirmed booking cancelled up to 48 Hrs. prior to the arrival date will not be liable for any cancellation fee.',
+      'Confirmed booking cancelled after 48 Hrs. will attract a cancellation fee equivalent to the room charge for each night booked and confirmed.',
+      'Any cancellation for a group within 15 days of arrival will attract retention for the number of rooms booked and the duration of stay.'
+    ]
+  },
+  {
+    title: 'NO-SHOW POLICY',
+    points: [
+      'Should there be a no-show on the rooms booked and confirmed, your company will be charged a retention fee equivalent to the room charges for each of the nights reserved and confirmed.'
+    ]
+  },
+  {
+    title: 'TAXATION POLICY',
+    points: [
+      'Tax is subject to change as per Government policies and regulations without prior notice.'
+    ]
+  },
+  {
+    title: 'CONFIRMATION',
+    points: [
+      'Kindly send us the acceptance of the rate letter along with company stamp and signature.'
+    ]
+  }
+]
+
+export default function ContractTemplate({ data, showSignature = true, isPreview = false, signedDetails }: ContractTemplateProps) {
+  const signedDate = signedDetails?.signedAt
+    ? new Date(signedDetails.signedAt).toLocaleDateString('en-GB')
+    : ''
+
   return (
     <div className="w-full bg-white dark:bg-slate-900 p-5">
       {/* Header */}
@@ -172,23 +242,19 @@ export default function ContractTemplate({ data, showSignature = true, isPreview
       </div>
 
       {/* Key Terms - Compact Cards */}
-      <div className="grid grid-cols-2 gap-2 mb-4">
-        <div className="border border-slate-200 dark:border-slate-700 rounded-lg p-2">
-          <h4 className="text-xs font-semibold text-slate-900 dark:text-slate-100 uppercase tracking-wide mb-1">Inclusions</h4>
-          <ul className="list-disc list-inside space-y-0.5 text-xs text-slate-700 dark:text-slate-300">
-            <li>Breakfast</li>
-            <li>Wi-Fi</li>
-            <li>Pool & Gym</li>
-          </ul>
-        </div>
-        <div className="border border-slate-200 dark:border-slate-700 rounded-lg p-2">
-          <h4 className="text-xs font-semibold text-slate-900 dark:text-slate-100 uppercase tracking-wide mb-1">Key Terms</h4>
-          <ul className="list-disc list-inside space-y-0.5 text-xs text-slate-700 dark:text-slate-300">
-            <li>14-day notice</li>
-            <li>No commissions</li>
-            <li>Deposit required</li>
-          </ul>
-        </div>
+      <div className="space-y-2 mb-4">
+        {policySections.map((section) => (
+          <div key={section.title} className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
+            <div className="bg-blue-700 text-white px-3 py-1.5 text-xs font-semibold tracking-wide">{section.title}</div>
+            <div className="p-3">
+              <ul className="list-disc list-inside space-y-1 text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
+                {section.points.map((point) => (
+                  <li key={point}>{point}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* Acceptance Section */}
@@ -198,19 +264,31 @@ export default function ContractTemplate({ data, showSignature = true, isPreview
           <div className="grid grid-cols-2 gap-2 text-xs">
             <div>
               <p className="font-medium text-slate-700 dark:text-slate-400 mb-0.5">Name</p>
-              <div className="border-b border-slate-400 h-4"></div>
+              <div className="border-b border-slate-400 h-6 flex items-end text-xs text-slate-900 dark:text-slate-100">
+                {signedDetails?.acceptedBy ?? ''}
+              </div>
             </div>
             <div>
               <p className="font-medium text-slate-700 dark:text-slate-400 mb-0.5">Designation</p>
-              <div className="border-b border-slate-400 h-4"></div>
+              <div className="border-b border-slate-400 h-6 flex items-end text-xs text-slate-900 dark:text-slate-100">
+                {signedDetails?.designation ?? ''}
+              </div>
             </div>
             <div>
               <p className="font-medium text-slate-700 dark:text-slate-400 mb-0.5">Date</p>
-              <div className="border-b border-slate-400 h-4"></div>
+              <div className="border-b border-slate-400 h-6 flex items-end text-xs text-slate-900 dark:text-slate-100">
+                {signedDate}
+              </div>
             </div>
             <div>
               <p className="font-medium text-slate-700 dark:text-slate-400 mb-0.5">Signature</p>
-              <div className="border-b border-slate-400 h-4"></div>
+              <div className="border-b border-slate-400 h-10 flex items-center">
+                {signedDetails?.signatureDataUrl ? (
+                  <img src={signedDetails.signatureDataUrl} alt="Digital signature" className="h-8 object-contain" />
+                ) : (
+                  <div className="h-4" />
+                )}
+              </div>
             </div>
           </div>
         </div>

@@ -5,6 +5,7 @@ import morgan from "morgan";
 import { config } from "./config.js";
 import authRouter from "./routes/auth.js";
 import organizationsRouter from "./routes/organizations.js";
+import bookingsRouter from "./routes/bookings.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { applySecurityMiddleware } from "./middleware/security.js";
 
@@ -32,7 +33,7 @@ app.use(
     allowedHeaders: ["Content-Type", "Authorization", "X-CSRF-Token"]
   })
 );
-app.use(express.json({ limit: "10kb" }));
+app.use(express.json({ limit: "2mb" }));
 app.use(cookieParser());
 app.use(morgan("combined"));
 
@@ -42,6 +43,7 @@ app.get("/health", (req, res) => {
 
 app.use("/api/auth", authRouter);
 app.use("/api/organizations", organizationsRouter);
+app.use("/api/bookings", bookingsRouter);
 
 app.use(errorHandler);
 

@@ -3,100 +3,52 @@
 import Link from 'next/link'
 import Header from '@/app/components/Header'
 import Sidebar from '@/app/components/Sidebar'
-import { useState } from 'react'
-
-interface Invoice {
-  id: string
-  invoiceNumber: string
-  guestName: string
-  guestInitials: string
-  guestInitialsBg: string
-  guestInitialsColor: string
-  hotelName: string
-  issued: string
-  dueDate: string
-  amount: number
-  status: 'overdue' | 'unpaid' | 'paid'
-}
-
-const invoicesData: Invoice[] = [
-  {
-    id: '1',
-    invoiceNumber: '#INV-2023-089',
-    guestName: 'Sarah Jenkins',
-    guestInitials: 'SJ',
-    guestInitialsBg: 'bg-orange-100',
-    guestInitialsColor: 'text-orange-600',
-    hotelName: 'Grand Hyatt Seattle',
-    issued: 'Oct 12, 2023',
-    dueDate: 'Oct 26, 2023',
-    amount: 1250.00,
-    status: 'overdue'
-  },
-  {
-    id: '2',
-    invoiceNumber: '#INV-2023-092',
-    guestName: 'Michael Klien',
-    guestInitials: 'MK',
-    guestInitialsBg: 'bg-blue-100',
-    guestInitialsColor: 'text-blue-600',
-    hotelName: 'Marriott Marquis SF',
-    issued: 'Oct 28, 2023',
-    dueDate: 'Nov 11, 2023',
-    amount: 840.50,
-    status: 'unpaid'
-  },
-  {
-    id: '3',
-    invoiceNumber: '#INV-2023-075',
-    guestName: 'Elena Woods',
-    guestInitials: 'EW',
-    guestInitialsBg: 'bg-purple-100',
-    guestInitialsColor: 'text-purple-600',
-    hotelName: 'Hilton Garden Inn NYC',
-    issued: 'Oct 05, 2023',
-    dueDate: 'Oct 19, 2023',
-    amount: 2100.00,
-    status: 'paid'
-  },
-  {
-    id: '4',
-    invoiceNumber: '#INV-2023-094',
-    guestName: 'James Liu',
-    guestInitials: 'JL',
-    guestInitialsBg: 'bg-teal-100',
-    guestInitialsColor: 'text-teal-600',
-    hotelName: 'W Hotel Austin',
-    issued: 'Nov 01, 2023',
-    dueDate: 'Nov 15, 2023',
-    amount: 450.00,
-    status: 'unpaid'
-  },
-  {
-    id: '5',
-    invoiceNumber: '#INV-2023-078',
-    guestName: 'Anita Roy',
-    guestInitials: 'AR',
-    guestInitialsBg: 'bg-pink-100',
-    guestInitialsColor: 'text-pink-600',
-    hotelName: 'Radisson Blu Chicago',
-    issued: 'Oct 08, 2023',
-    dueDate: 'Oct 22, 2023',
-    amount: 3200.00,
-    status: 'paid'
-  }
-]
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { corporateTokenStorage, fetchCorporateInvoices, CorporateInvoice } from '@/lib/corporateAuth'
 
 export default function InvoicesClient() {
+  const router = useRouter()
+  const [invoicesData, setInvoicesData] = useState<CorporateInvoice[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [selectedInvoices, setSelectedInvoices] = useState<string[]>([])
 
+  useEffect(() => {
+    const token = corporateTokenStorage.get()
+    if (!token) {
+      router.replace('/corporate-portal/login')
+      return
+    }
+
+    const loadInvoices = async () => {
+      setIsLoading(true)
+      setError(null)
+      try {
+        const response = await fetchCorporateInvoices()
+        setInvoicesData(response.invoices)
+      } catch (loadError) {
+        const message = loadError instanceof Error ? loadError.message : 'Failed to load invoices'
+        setError(message)
+        if (message.toLowerCase().includes('unauthorized')) {
+          corporateTokenStorage.clear()
+          router.replace('/corporate-portal/login')
+        }
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    void loadInvoices()
+  }, [router])
+
   const filteredInvoices = invoicesData.filter(invoice => {
     const matchesSearch = invoice.invoiceNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         invoice.guestName.toLowerCase().includes(searchQuery.toLowerCase())
+                         invoice.employeeName.toLowerCase().includes(searchQuery.toLowerCase())
     const matchesStatus = !statusFilter || invoice.status === statusFilter
     return matchesSearch && matchesStatus
   })
@@ -168,6 +120,12 @@ export default function InvoicesClient() {
                 </button>
               </div>
             </div>
+
+            {error && (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/30 dark:bg-red-900/10 dark:text-red-300">
+                {error}
+              </div>
+            )}
 
             {/* Filters & Search */}
             <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-gray-700 p-5">
@@ -258,8 +216,12 @@ export default function InvoicesClient() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200 dark:divide-gray-700">
-                    {filteredInvoices.map((invoice) => (
-                      <tr key={invoice.id} className="group hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer" onClick={() => window.location.href = `/corporate-portal/invoices/${invoice.invoiceNumber.replace('#', '')}`}>
+                    {isLoading ? (
+                      <tr>
+                        <td colSpan={9} className="py-8 text-center text-sm text-slate-500 dark:text-gray-400">Loading invoices...</td>
+                      </tr>
+                    ) : filteredInvoices.map((invoice) => (
+                      <tr key={invoice.id} className="group hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer" onClick={() => window.location.href = `/corporate-portal/invoices/${invoice.invoiceNumber}`}>
                         <td className="py-3 pl-5 pr-2" onClick={(e) => e.stopPropagation()}>
                           <input
                             className="rounded border-slate-300 text-primary focus:ring-primary/20 dark:bg-slate-700 dark:border-gray-600 size-4 cursor-pointer"
@@ -269,20 +231,20 @@ export default function InvoicesClient() {
                           />
                         </td>
                         <td className="py-3 px-3">
-                          <span className="font-bold text-primary text-sm tabular-nums whitespace-nowrap">{invoice.invoiceNumber}</span>
+                          <span className="font-bold text-primary text-sm tabular-nums whitespace-nowrap">#{invoice.invoiceNumber}</span>
                         </td>
                         <td className="py-3 px-3">
-                          <span className="text-sm font-medium text-slate-900 dark:text-white whitespace-nowrap">{invoice.guestName}</span>
+                          <span className="text-sm font-medium text-slate-900 dark:text-white whitespace-nowrap">{invoice.employeeName}</span>
                         </td>
                         <td className="py-3 px-3">
-                          <span className="text-sm text-slate-600 dark:text-gray-300 whitespace-nowrap">{invoice.hotelName}</span>
+                          <span className="text-sm text-slate-600 dark:text-gray-300 whitespace-nowrap">{invoice.propertyName ?? 'Hotel Stay'}</span>
                         </td>
-                        <td className="py-3 px-3 text-sm text-slate-500 dark:text-gray-400 tabular-nums whitespace-nowrap">{invoice.issued}</td>
+                        <td className="py-3 px-3 text-sm text-slate-500 dark:text-gray-400 tabular-nums whitespace-nowrap">{new Date(invoice.invoiceDate).toLocaleDateString()}</td>
                         <td className="py-3 px-3 text-sm tabular-nums whitespace-nowrap">
-                          {invoice.status === 'overdue' ? <span className="font-medium text-red-600 dark:text-red-400">{invoice.dueDate}</span> : <span className="text-slate-600 dark:text-gray-300">{invoice.dueDate}</span>}
+                          {invoice.status === 'overdue' ? <span className="font-medium text-red-600 dark:text-red-400">{new Date(invoice.dueDate).toLocaleDateString()}</span> : <span className="text-slate-600 dark:text-gray-300">{new Date(invoice.dueDate).toLocaleDateString()}</span>}
                         </td>
                         <td className="py-3 px-3 text-sm font-bold text-slate-900 dark:text-white text-right tabular-nums whitespace-nowrap">
-                          ${invoice.amount.toFixed(2)}
+                          ₹{invoice.amount.toFixed(2)}
                         </td>
                         <td className="py-3 px-3 text-center">
                           <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold whitespace-nowrap ${getStatusBadge(invoice.status)}`}>
@@ -291,7 +253,7 @@ export default function InvoicesClient() {
                         </td>
                         <td className="py-3 pl-3 pr-5 text-right" onClick={(e) => e.stopPropagation()}>
                           {invoice.status !== 'paid' ? (
-                            <Link href={`/corporate-portal/invoices/${invoice.invoiceNumber.replace('#', '')}`} className="px-3.5 py-1.5 bg-primary hover:bg-blue-600 text-white text-xs font-bold rounded-md shadow-sm shadow-primary/30 transition-colors inline-block">
+                            <Link href={`/corporate-portal/invoices/${invoice.invoiceNumber}`} className="px-3.5 py-1.5 bg-primary hover:bg-blue-600 text-white text-xs font-bold rounded-md shadow-sm shadow-primary/30 transition-colors inline-block">
                               Pay Now
                             </Link>
                           ) : (

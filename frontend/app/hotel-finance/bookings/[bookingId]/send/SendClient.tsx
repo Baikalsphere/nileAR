@@ -5,7 +5,9 @@ import Sidebar from '@/app/components/Sidebar'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useState, useEffect } from 'react'
-import { getBookingById, loadAttachments, clearAttachments, type AttachedDocumentsMeta } from '../../data'
+import { loadAttachments, clearAttachments, type AttachedDocumentsMeta } from '../../data'
+import { BookingRecord, fetchBookingBills, fetchBookingById, sendBookingInvoice } from '@/lib/bookingsApi'
+import { tokenStorage } from '@/lib/auth'
 
 const billLabels: Record<string, { label: string; icon: string }> = {
   roomCharges: { label: 'Room Charges', icon: 'hotel' },
@@ -22,19 +24,62 @@ const billLabels: Record<string, { label: string; icon: string }> = {
 
 export default function SendClient({ bookingId }: { bookingId: string }) {
   const router = useRouter()
-  const booking = getBookingById(bookingId)
+  const [booking, setBooking] = useState<BookingRecord | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [attachments, setAttachments] = useState<AttachedDocumentsMeta | null>(null)
   const [recipientEmail, setRecipientEmail] = useState('')
   const [ccEmail, setCcEmail] = useState('')
   const [isSending, setIsSending] = useState(false)
   const [isSent, setIsSent] = useState(false)
+  const [sentInvoiceNumber, setSentInvoiceNumber] = useState<string | null>(null)
+  const [invoicesPortalLink, setInvoicesPortalLink] = useState<string>('')
+  const [extraBillsTotal, setExtraBillsTotal] = useState(0)
+  const [uploadedBillCount, setUploadedBillCount] = useState(0)
 
   useEffect(() => {
+    const token = tokenStorage.get()
+    if (!token) {
+      router.replace('/hotel-finance/login')
+      return
+    }
+
+    const loadBooking = async () => {
+      setIsLoading(true)
+      setLoadError(null)
+      try {
+        const response = await fetchBookingById(bookingId)
+        setBooking(response.booking)
+        setRecipientEmail(response.booking.organizationEmail ?? '')
+
+        const billsResponse = await fetchBookingBills(bookingId)
+        const extras = billsResponse.bills.reduce((sum, bill) => sum + Number(bill.billAmount ?? 0), 0)
+        setExtraBillsTotal(extras)
+        setUploadedBillCount(billsResponse.bills.length)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to load booking'
+        setLoadError(message)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    void loadBooking()
+
     const saved = loadAttachments(bookingId)
     setAttachments(saved)
-  }, [bookingId])
+  }, [bookingId, router])
 
-  if (!booking) {
+  if (isLoading) {
+    return (
+      <div className="flex h-screen w-full overflow-hidden bg-background-light dark:bg-background-dark text-text-main-light dark:text-text-main-dark">
+        <Sidebar title="Hotel Finance" logoIcon="domain" />
+        <main className="flex-1 flex items-center justify-center">Loading booking...</main>
+      </div>
+    )
+  }
+
+  if (loadError || !booking) {
     return (
       <div className="flex h-screen w-full overflow-hidden bg-background-light dark:bg-background-dark text-text-main-light dark:text-text-main-dark">
         <Sidebar title="Hotel Finance" logoIcon="domain" />
@@ -44,6 +89,7 @@ export default function SendClient({ bookingId }: { bookingId: string }) {
             <div className="text-center">
               <span className="material-symbols-outlined text-[64px] text-slate-300 dark:text-slate-600">error</span>
               <h2 className="text-xl font-bold mt-4">Booking Not Found</h2>
+              {loadError && <p className="text-sm text-red-600 mt-2">{loadError}</p>}
               <Link href="/hotel-finance/bookings" className="mt-6 inline-flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg font-semibold">
                 <span className="material-symbols-outlined text-[18px]">arrow_back</span>
                 Back to Bookings
@@ -57,9 +103,11 @@ export default function SendClient({ bookingId }: { bookingId: string }) {
 
   const attachmentKeys = attachments ? Object.keys(attachments) as (keyof AttachedDocumentsMeta)[] : []
   const attachmentCount = attachmentKeys.length
+  const effectiveBillCount = Math.max(attachmentCount, uploadedBillCount)
+  const totalDue = booking.totalPrice + extraBillsTotal
 
   const todayDate = new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })
-  const invoiceNumber = `INV-${booking.bookingNumber.replace('BK-', '')}-${new Date().getFullYear()}`
+  const invoiceNumber = sentInvoiceNumber ?? `INV-${booking.bookingNumber.replace('BK-', '')}-${new Date().getFullYear()}`
   const invoiceDate = new Date(booking.checkOutDate).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' })
   const checkInFormatted = new Date(booking.checkInDate).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' })
   const checkOutFormatted = new Date(booking.checkOutDate).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' })
@@ -68,7 +116,7 @@ export default function SendClient({ bookingId }: { bookingId: string }) {
   const today = new Date()
   const pendingDays = Math.max(0, Math.floor((today.getTime() - checkIn.getTime()) / (1000 * 60 * 60 * 24)))
 
-  const paymentLink = `${typeof window !== 'undefined' ? window.location.origin : ''}/corporate-portal/login`
+  const paymentLink = invoicesPortalLink || `${typeof window !== 'undefined' ? window.location.origin : ''}/corporate-portal/invoices`
 
   const handleSend = async () => {
     if (!recipientEmail) {
@@ -76,9 +124,21 @@ export default function SendClient({ bookingId }: { bookingId: string }) {
       return
     }
     setIsSending(true)
-    await new Promise(resolve => setTimeout(resolve, 2500))
-    setIsSending(false)
-    setIsSent(true)
+    try {
+      const response = await sendBookingInvoice(bookingId, {
+        recipientEmail,
+        ccEmail,
+        portalBaseUrl: typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'
+      })
+
+      setSentInvoiceNumber(response.invoice.invoiceNumber)
+      setInvoicesPortalLink(response.invoicesPortalLink)
+      setIsSent(true)
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Failed to send invoice email')
+    } finally {
+      setIsSending(false)
+    }
   }
 
   const handleDone = () => {
@@ -105,15 +165,15 @@ export default function SendClient({ bookingId }: { bookingId: string }) {
               <div className="mt-4 p-4 bg-surface-light dark:bg-surface-dark rounded-xl border border-slate-100 dark:border-slate-800">
                 <div className="flex justify-between text-sm">
                   <span className="text-text-sub-light dark:text-text-sub-dark">Organization</span>
-                  <span className="font-semibold">{booking.corporationName}</span>
+                    <span className="font-semibold">{booking.organizationName}</span>
                 </div>
                 <div className="flex justify-between text-sm mt-2">
                   <span className="text-text-sub-light dark:text-text-sub-dark">Amount</span>
-                  <span className="font-semibold">&#8377;{booking.totalPrice.toLocaleString()}</span>
+                  <span className="font-semibold">&#8377;{totalDue.toLocaleString()}</span>
                 </div>
                 <div className="flex justify-between text-sm mt-2">
                   <span className="text-text-sub-light dark:text-text-sub-dark">Service Bills</span>
-                  <span className="font-semibold">{attachmentCount} attached</span>
+                  <span className="font-semibold">{effectiveBillCount} attached</span>
                 </div>
                 <div className="flex justify-between text-sm mt-2">
                   <span className="text-text-sub-light dark:text-text-sub-dark">Payment Portal</span>
@@ -215,10 +275,10 @@ export default function SendClient({ bookingId }: { bookingId: string }) {
                       Service Bills
                     </h3>
                     <span className="text-xs font-bold text-primary bg-blue-50 dark:bg-blue-900/20 px-2 py-1 rounded-full">
-                      {attachmentCount}
+                      {effectiveBillCount}
                     </span>
                   </div>
-                  {attachmentCount > 0 ? (
+                  {effectiveBillCount > 0 ? (
                     <div className="space-y-2">
                       {attachmentKeys.map((key) => {
                         const bill = billLabels[key] || { label: key, icon: 'description' }
@@ -256,15 +316,23 @@ export default function SendClient({ bookingId }: { bookingId: string }) {
                     </div>
                     <div className="flex justify-between text-sm">
                       <span className="text-text-sub-light dark:text-text-sub-dark">Organization</span>
-                      <span className="font-semibold">{booking.corporationName}</span>
+                      <span className="font-semibold">{booking.organizationName}</span>
                     </div>
                     <div className="flex justify-between text-sm">
                       <span className="text-text-sub-light dark:text-text-sub-dark">Guest</span>
-                      <span className="font-semibold">{booking.customerName}</span>
+                      <span className="font-semibold">{booking.employeeName}</span>
+                    </div>
+                    <div className="flex justify-between text-sm pt-2 border-t border-slate-100 dark:border-slate-800">
+                      <span className="text-text-sub-light dark:text-text-sub-dark">Contract Amount</span>
+                      <span className="font-semibold">&#8377;{booking.totalPrice.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-text-sub-light dark:text-text-sub-dark">Extra Bills</span>
+                      <span className="font-semibold">&#8377;{extraBillsTotal.toLocaleString()}</span>
                     </div>
                     <div className="flex justify-between text-sm pt-2 border-t border-slate-100 dark:border-slate-800">
                       <span className="text-text-sub-light dark:text-text-sub-dark">Amount Due</span>
-                      <span className="text-lg font-extrabold text-primary">&#8377;{booking.totalPrice.toLocaleString()}</span>
+                      <span className="text-lg font-extrabold text-primary">&#8377;{totalDue.toLocaleString()}</span>
                     </div>
                   </div>
                 </div>
@@ -316,7 +384,7 @@ export default function SendClient({ bookingId }: { bookingId: string }) {
                     {/* To Address */}
                     <div className="mb-6">
                       <p className="text-sm text-text-main-light dark:text-text-main-dark font-semibold">To,</p>
-                      <p className="text-sm text-text-main-light dark:text-text-main-dark font-bold">{booking.corporationName}</p>
+                      <p className="text-sm text-text-main-light dark:text-text-main-dark font-bold">{booking.organizationName}</p>
                       <p className="text-sm text-text-sub-light dark:text-text-sub-dark">
                         {recipientEmail || <span className="italic text-slate-400">Enter recipient email &rarr;</span>}
                       </p>
@@ -339,7 +407,7 @@ export default function SendClient({ bookingId }: { bookingId: string }) {
                       <p>
                         Please find enclosed herewith the Statement of Accounts along with supporting service bills for your reference,
                         reflecting the transactions recorded in our books as on date. As per our records, an outstanding balance of{' '}
-                        <span className="font-bold text-primary">Rs. {booking.totalPrice.toLocaleString()}/-</span>{' '}
+                        <span className="font-bold text-primary">Rs. {totalDue.toLocaleString()}/-</span>{' '}
                         is currently due for payment. Kindly review the statement and arrange for payment at the earliest convenience.
                       </p>
 
@@ -363,8 +431,8 @@ export default function SendClient({ bookingId }: { bookingId: string }) {
                               <td className="px-3 py-2.5 text-text-sub-light dark:text-text-sub-dark">1</td>
                               <td className="px-3 py-2.5 font-medium">{invoiceNumber}</td>
                               <td className="px-3 py-2.5 text-text-sub-light dark:text-text-sub-dark">{invoiceDate}</td>
-                              <td className="px-3 py-2.5 text-right font-semibold">&#8377;{booking.totalPrice.toLocaleString()}</td>
-                              <td className="px-3 py-2.5">{booking.customerName}</td>
+                              <td className="px-3 py-2.5 text-right font-semibold">&#8377;{totalDue.toLocaleString()}</td>
+                              <td className="px-3 py-2.5">{booking.employeeName}</td>
                               <td className="px-3 py-2.5 text-text-sub-light dark:text-text-sub-dark">{checkInFormatted}</td>
                               <td className="px-3 py-2.5 text-text-sub-light dark:text-text-sub-dark">{checkOutFormatted}</td>
                               <td className="px-3 py-2.5 text-right font-medium text-amber-600 dark:text-amber-400">{pendingDays} days</td>
@@ -373,7 +441,7 @@ export default function SendClient({ bookingId }: { bookingId: string }) {
                           <tfoot>
                             <tr className="bg-slate-50 dark:bg-slate-800/50 font-bold">
                               <td colSpan={3} className="px-3 py-2.5 text-right uppercase text-xs tracking-wider text-text-sub-light dark:text-text-sub-dark">Total Outstanding</td>
-                              <td className="px-3 py-2.5 text-right text-primary text-base">&#8377;{booking.totalPrice.toLocaleString()}</td>
+                              <td className="px-3 py-2.5 text-right text-primary text-base">&#8377;{totalDue.toLocaleString()}</td>
                               <td colSpan={4}></td>
                             </tr>
                           </tfoot>
@@ -381,10 +449,10 @@ export default function SendClient({ bookingId }: { bookingId: string }) {
                       </div>
 
                       {/* Attached Service Bills List */}
-                      {attachmentCount > 0 && (
+                      {effectiveBillCount > 0 && (
                         <div className="p-4 bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800 rounded-lg">
                           <p className="text-xs font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider mb-2">
-                            Enclosed Service Bills ({attachmentCount})
+                            Enclosed Service Bills ({effectiveBillCount})
                           </p>
                           <div className="flex flex-wrap gap-2">
                             {attachmentKeys.map((key) => {
@@ -396,6 +464,9 @@ export default function SendClient({ bookingId }: { bookingId: string }) {
                                 </span>
                               )
                             })}
+                            {attachmentKeys.length === 0 ? (
+                              <span className="text-xs text-emerald-700 dark:text-emerald-300">Uploaded bills are attached in the invoice package.</span>
+                            ) : null}
                           </div>
                         </div>
                       )}
@@ -487,7 +558,7 @@ export default function SendClient({ bookingId }: { bookingId: string }) {
               </Link>
               <button
                 onClick={handleSend}
-                disabled={!recipientEmail || isSending || attachmentCount === 0}
+                disabled={!recipientEmail || isSending || effectiveBillCount === 0}
                 className="flex items-center gap-2 px-6 py-2.5 bg-primary hover:bg-blue-700 text-white rounded-xl font-semibold transition-all duration-200 shadow-sm hover:shadow-lg hover:shadow-primary/25 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:shadow-none"
               >
                 {isSending ? (

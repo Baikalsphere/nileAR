@@ -3,132 +3,123 @@
 import Header from '@/app/components/Header'
 import Sidebar from '@/app/components/Sidebar'
 import Link from 'next/link'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import InvoiceAutomationWorkflow from './InvoiceAutomationWorkflow'
-
-interface Booking {
-  id: string
-  bookingNumber: string
-  customerName: string
-  corporationName: string
-  checkInDate: string
-  checkOutDate: string
-  roomType: string
-  nights: number
-  pricePerNight: number
-  totalPrice: number
-  status: 'pending' | 'confirmed' | 'checked-in' | 'checked-out'
-  gstApplicable: boolean
-}
-
-const mockBookings: Booking[] = [
-  {
-    id: '1',
-    bookingNumber: 'BK-001',
-    customerName: 'John Smith',
-    corporationName: 'Acme Corporation',
-    checkInDate: '2024-02-10',
-    checkOutDate: '2024-02-15',
-    roomType: 'Deluxe Suite',
-    nights: 5,
-    pricePerNight: 350,
-    totalPrice: 1750,
-    status: 'pending',
-    gstApplicable: true,
-  },
-  {
-    id: '2',
-    bookingNumber: 'BK-002',
-    customerName: 'Sarah Johnson',
-    corporationName: 'Tech Innovations Inc',
-    checkInDate: '2024-02-12',
-    checkOutDate: '2024-02-14',
-    roomType: 'Standard Room',
-    nights: 2,
-    pricePerNight: 200,
-    totalPrice: 400,
-    status: 'confirmed',
-    gstApplicable: false,
-  },
-  {
-    id: '3',
-    bookingNumber: 'BK-003',
-    customerName: 'Michael Chen',
-    corporationName: 'Global Finance Ltd',
-    checkInDate: '2024-02-08',
-    checkOutDate: '2024-02-20',
-    roomType: 'Presidential Suite',
-    nights: 12,
-    pricePerNight: 500,
-    totalPrice: 6000,
-    status: 'checked-in',
-    gstApplicable: true,
-  },
-  {
-    id: '4',
-    bookingNumber: 'BK-004',
-    customerName: 'Emily Davis',
-    corporationName: 'Startup Ventures LLC',
-    checkInDate: '2024-02-05',
-    checkOutDate: '2024-02-07',
-    roomType: 'Standard Room',
-    nights: 2,
-    pricePerNight: 200,
-    totalPrice: 400,
-    status: 'checked-out',
-    gstApplicable: false,
-  },
-  {
-    id: '5',
-    bookingNumber: 'BK-005',
-    customerName: 'Robert Wilson',
-    corporationName: 'Enterprise Solutions',
-    checkInDate: '2024-02-16',
-    checkOutDate: '2024-02-18',
-    roomType: 'Deluxe Suite',
-    nights: 2,
-    pricePerNight: 350,
-    totalPrice: 700,
-    status: 'pending',
-    gstApplicable: true,
-  },
-  {
-    id: '6',
-    bookingNumber: 'BK-006',
-    customerName: 'Lisa Anderson',
-    corporationName: 'Digital Transformations Co',
-    checkInDate: '2024-02-11',
-    checkOutDate: '2024-02-13',
-    roomType: 'Standard Room',
-    nights: 2,
-    pricePerNight: 200,
-    totalPrice: 400,
-    status: 'confirmed',
-    gstApplicable: true,
-  },
-]
+import { tokenStorage } from '@/lib/auth'
+import {
+  BookingEmployee,
+  BookingOrganization,
+  BookingRecord,
+  ContractRoomType,
+  createBooking,
+  fetchBookingEmployees,
+  fetchBookingOrganizations,
+  fetchBookingRoomTypes,
+  fetchBookings
+} from '@/lib/bookingsApi'
 
 export default function BookingsClient() {
-  const [bookings, setBookings] = useState<Booking[]>(mockBookings)
+  const router = useRouter()
+  const [bookings, setBookings] = useState<BookingRecord[]>([])
+  const [organizations, setOrganizations] = useState<BookingOrganization[]>([])
+  const [employees, setEmployees] = useState<BookingEmployee[]>([])
+  const [contractRoomTypes, setContractRoomTypes] = useState<ContractRoomType[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [selectedFilter, setSelectedFilter] = useState<string>('all')
   const [fromDate, setFromDate] = useState<string>('')
   const [toDate, setToDate] = useState<string>('')
   const [showWorkflow, setShowWorkflow] = useState(false)
-  const [selectedBookingForCheckout, setSelectedBookingForCheckout] = useState<Booking | null>(null)
+  const [selectedBookingForCheckout, setSelectedBookingForCheckout] = useState<BookingRecord | null>(null)
   const [selectedBookings, setSelectedBookings] = useState<Set<string>>(new Set())
   const [showAddBookingModal, setShowAddBookingModal] = useState(false)
+  const [isSavingBooking, setIsSavingBooking] = useState(false)
   const [formData, setFormData] = useState({
-    bookingNumber: '',
-    customerName: '',
-    corporationName: '',
+    bookingNumber: `BK-${Math.floor(100 + Math.random() * 900)}`,
+    organizationId: '',
+    employeeId: '',
     checkInDate: '',
     checkOutDate: '',
     roomType: '',
-    pricePerNight: '',
     gstApplicable: false,
   })
 
-  const handleCheckout = (booking: Booking) => {
+  const loadBookings = async () => {
+    setIsLoading(true)
+    setError(null)
+    try {
+      const bookingResponse = await fetchBookings({
+        status: selectedFilter,
+        fromDate,
+        toDate
+      })
+      setBookings(bookingResponse.bookings)
+    } catch (loadError) {
+      const message = loadError instanceof Error ? loadError.message : 'Failed to load bookings'
+      setError(message)
+      if (message.toLowerCase().includes('unauthorized')) {
+        tokenStorage.clear()
+        router.replace('/hotel-finance/login')
+      }
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    const token = tokenStorage.get()
+    if (!token) {
+      router.replace('/hotel-finance/login')
+      return
+    }
+
+    const loadMeta = async () => {
+      try {
+        const orgResponse = await fetchBookingOrganizations()
+        setOrganizations(orgResponse.organizations)
+      } catch (metaError) {
+        setError(metaError instanceof Error ? metaError.message : 'Failed to load organizations')
+      }
+    }
+
+    void loadMeta()
+  }, [router])
+
+  useEffect(() => {
+    void loadBookings()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedFilter, fromDate, toDate])
+
+  useEffect(() => {
+    if (!formData.organizationId) {
+      setEmployees([])
+      setContractRoomTypes([])
+      return
+    }
+
+    const loadOrganizationBookingMeta = async () => {
+      try {
+        const [employeeResponse, roomTypeResponse] = await Promise.all([
+          fetchBookingEmployees(formData.organizationId),
+          fetchBookingRoomTypes(formData.organizationId)
+        ])
+
+        setEmployees(employeeResponse.employees)
+        setContractRoomTypes(roomTypeResponse.roomTypes)
+      } catch (metaError) {
+        setEmployees([])
+        setContractRoomTypes([])
+        setError(metaError instanceof Error ? metaError.message : 'Failed to load organization booking terms')
+      }
+    }
+
+    void loadOrganizationBookingMeta()
+  }, [formData.organizationId])
+
+  const selectedRoomTypeDetails = contractRoomTypes.find((roomType) => roomType.roomType === formData.roomType) ?? null
+
+  const handleCheckout = (booking: BookingRecord) => {
     setSelectedBookingForCheckout(booking)
     setShowWorkflow(true)
   }
@@ -143,7 +134,7 @@ export default function BookingsClient() {
     setSelectedBookings(newSelected)
   }
 
-  const toggleSelectAll = (bookingsToSelect: Booking[]) => {
+  const toggleSelectAll = (bookingsToSelect: BookingRecord[]) => {
     if (selectedBookings.size === bookingsToSelect.length && bookingsToSelect.length > 0) {
       setSelectedBookings(new Set())
     } else {
@@ -151,62 +142,41 @@ export default function BookingsClient() {
     }
   }
 
-  const handleAddBooking = (e: React.FormEvent) => {
+  const handleAddBooking = async (e: React.FormEvent) => {
     e.preventDefault()
-    
-    const checkIn = new Date(formData.checkInDate)
-    const checkOut = new Date(formData.checkOutDate)
-    const nights = Math.ceil((checkOut.getTime() - checkIn.getTime()) / (1000 * 60 * 60 * 24))
-    const totalPrice = nights * parseFloat(formData.pricePerNight)
+    setIsSavingBooking(true)
+    setError(null)
+    try {
+      await createBooking({
+        bookingNumber: formData.bookingNumber,
+        organizationId: formData.organizationId,
+        employeeId: formData.employeeId,
+        checkInDate: formData.checkInDate,
+        checkOutDate: formData.checkOutDate,
+        roomType: formData.roomType,
+        gstApplicable: formData.gstApplicable,
+        status: 'pending'
+      })
 
-    const newBooking: Booking = {
-      id: (bookings.length + 1).toString(),
-      bookingNumber: formData.bookingNumber,
-      customerName: formData.customerName,
-      corporationName: formData.corporationName,
-      checkInDate: formData.checkInDate,
-      checkOutDate: formData.checkOutDate,
-      roomType: formData.roomType,
-      nights,
-      pricePerNight: parseFloat(formData.pricePerNight),
-      totalPrice,
-      status: 'pending',
-      gstApplicable: formData.gstApplicable,
+      setShowAddBookingModal(false)
+      setFormData({
+        bookingNumber: `BK-${Math.floor(100 + Math.random() * 900)}`,
+        organizationId: '',
+        employeeId: '',
+        checkInDate: '',
+        checkOutDate: '',
+        roomType: '',
+        gstApplicable: false,
+      })
+      await loadBookings()
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : 'Unable to add booking')
+    } finally {
+      setIsSavingBooking(false)
     }
-
-    setBookings([...bookings, newBooking])
-    setShowAddBookingModal(false)
-    setFormData({
-      bookingNumber: '',
-      customerName: '',
-      corporationName: '',
-      checkInDate: '',
-      checkOutDate: '',
-      roomType: '',
-      pricePerNight: '',
-      gstApplicable: false,
-    })
   }
 
-  const filteredBookings = bookings.filter(booking => {
-    // Status filter
-    if (selectedFilter !== 'all' && booking.status !== selectedFilter) return false
-    
-    // Date range filter
-    if (fromDate) {
-      const bookingDate = new Date(booking.checkInDate)
-      const filterDate = new Date(fromDate)
-      if (bookingDate < filterDate) return false
-    }
-    
-    if (toDate) {
-      const bookingDate = new Date(booking.checkOutDate)
-      const filterDate = new Date(toDate)
-      if (bookingDate > filterDate) return false
-    }
-    
-    return true
-  })
+  const filteredBookings = bookings
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background-light dark:bg-background-dark text-text-main-light dark:text-text-main-dark transition-colors duration-200">
@@ -239,6 +209,12 @@ export default function BookingsClient() {
                 </button>
               </div>
             </div>
+
+            {error && (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/30 dark:bg-red-900/10 dark:text-red-300">
+                {error}
+              </div>
+            )}
 
             {/* Filter Tabs */}
             <div className="flex flex-col gap-4">
@@ -324,7 +300,13 @@ export default function BookingsClient() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredBookings.length > 0 ? (
+                    {isLoading ? (
+                      <tr>
+                        <td colSpan={7} className="px-6 py-8 text-center text-text-sub-light dark:text-text-sub-dark">
+                          Loading bookings...
+                        </td>
+                      </tr>
+                    ) : filteredBookings.length > 0 ? (
                       filteredBookings.map((booking) => (
                         <tr key={booking.id} className={`border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors ${selectedBookings.has(booking.id) ? 'bg-blue-50 dark:bg-blue-900/20' : ''}`}>
                           <td className="px-6 py-4">
@@ -339,10 +321,10 @@ export default function BookingsClient() {
                             {booking.bookingNumber}
                           </td>
                           <td className="px-6 py-4 text-sm text-text-main-light dark:text-text-main-dark">
-                            {booking.customerName}
+                            {booking.employeeName}
                           </td>
                           <td className="px-6 py-4 text-sm text-text-sub-light dark:text-text-sub-dark">
-                            {booking.corporationName}
+                            {booking.organizationName}
                           </td>
                       <td className="px-6 py-4 text-sm text-text-main-light dark:text-text-main-dark">
                             {new Date(booking.checkInDate).toLocaleDateString('en-US', { 
@@ -356,20 +338,31 @@ export default function BookingsClient() {
                           </td>
                           <td className="px-6 py-4">
                             <div className="flex gap-2 flex-wrap">
-                              <Link
-                                href={`/hotel-finance/bookings/${booking.id}/bills`}
-                                className="flex items-center gap-2 px-3 py-2 bg-blue-100 dark:bg-blue-900/30 hover:bg-blue-200 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-400 rounded-lg text-sm font-semibold transition-all duration-200"
-                              >
-                                <span className="material-symbols-outlined text-[18px]">attach_file</span>
-                                <span className="hidden sm:inline">Attach</span>
-                              </Link>
-                              <Link 
-                                href={`/hotel-finance/bookings/${booking.id}/send`}
-                                className="flex items-center gap-2 px-3 py-2 bg-primary hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition-all duration-200 shadow-sm hover:shadow-md hover:shadow-primary/30"
-                              >
-                                <span className="material-symbols-outlined text-[18px]">send</span>
-                                <span className="hidden sm:inline">Send</span>
-                              </Link>
+                              {booking.invoiceId ? (
+                                <>
+                                  <div className="flex items-center gap-2 px-3 py-2 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 rounded-lg text-sm font-semibold">
+                                    <span className="material-symbols-outlined text-[18px]">check_circle</span>
+                                    <span>Invoice Sent</span>
+                                  </div>
+                                </>
+                              ) : (
+                                <>
+                                  <Link
+                                    href={`/hotel-finance/bookings/${booking.id}/bills`}
+                                    className="flex items-center gap-2 px-3 py-2 bg-blue-100 dark:bg-blue-900/30 hover:bg-blue-200 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-400 rounded-lg text-sm font-semibold transition-all duration-200"
+                                  >
+                                    <span className="material-symbols-outlined text-[18px]">attach_file</span>
+                                    <span className="hidden sm:inline">Attach</span>
+                                  </Link>
+                                  <Link 
+                                    href={`/hotel-finance/bookings/${booking.id}/send`}
+                                    className="flex items-center gap-2 px-3 py-2 bg-primary hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition-all duration-200 shadow-sm hover:shadow-md hover:shadow-primary/30"
+                                  >
+                                    <span className="material-symbols-outlined text-[18px]">send</span>
+                                    <span className="hidden sm:inline">Send</span>
+                                  </Link>
+                                </>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -438,8 +431,8 @@ export default function BookingsClient() {
       {showWorkflow && selectedBookingForCheckout && (
         <InvoiceAutomationWorkflow
           bookingId={selectedBookingForCheckout.bookingNumber}
-          customerName={selectedBookingForCheckout.customerName}
-          corporationName={selectedBookingForCheckout.corporationName}
+          customerName={selectedBookingForCheckout.employeeName}
+          corporationName={selectedBookingForCheckout.organizationName}
           totalAmount={selectedBookingForCheckout.totalPrice}
           onClose={() => {
             setShowWorkflow(false)
@@ -479,31 +472,45 @@ export default function BookingsClient() {
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-text-main-light dark:text-text-main-dark mb-2">
-                    Customer Name *
+                    Organization *
                   </label>
-                  <input
-                    type="text"
+                  <select
                     required
-                    value={formData.customerName}
-                    onChange={(e) => setFormData({...formData, customerName: e.target.value})}
+                    value={formData.organizationId}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        organizationId: e.target.value,
+                        employeeId: '',
+                        roomType: ''
+                      })
+                    }
                     className="w-full px-4 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-text-main-light dark:text-text-main-dark focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
-                    placeholder="John Smith"
-                  />
+                  >
+                    <option value="">Select organization</option>
+                    {organizations.map((organization) => (
+                      <option key={organization.id} value={organization.id}>{organization.name}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
               <div>
                 <label className="block text-sm font-semibold text-text-main-light dark:text-text-main-dark mb-2">
-                  Corporation Name *
+                  Employee *
                 </label>
-                <input
-                  type="text"
+                <select
                   required
-                  value={formData.corporationName}
-                  onChange={(e) => setFormData({...formData, corporationName: e.target.value})}
+                  value={formData.employeeId}
+                  onChange={(e) => setFormData({...formData, employeeId: e.target.value})}
                   className="w-full px-4 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-text-main-light dark:text-text-main-dark focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
-                  placeholder="Acme Corporation"
-                />
+                  disabled={!formData.organizationId}
+                >
+                  <option value="">Select employee</option>
+                  {employees.map((employee) => (
+                    <option key={employee.id} value={employee.id}>{employee.fullName} ({employee.employeeCode})</option>
+                  ))}
+                </select>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -543,30 +550,31 @@ export default function BookingsClient() {
                     value={formData.roomType}
                     onChange={(e) => setFormData({...formData, roomType: e.target.value})}
                     className="w-full px-4 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-text-main-light dark:text-text-main-dark focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+                    disabled={!formData.organizationId || contractRoomTypes.length === 0}
                   >
                     <option value="">Select Room Type</option>
-                    <option value="Standard Room">Standard Room</option>
-                    <option value="Deluxe Suite">Deluxe Suite</option>
-                    <option value="Presidential Suite">Presidential Suite</option>
-                    <option value="Executive Room">Executive Room</option>
+                    {contractRoomTypes.map((roomType) => (
+                      <option key={roomType.roomType} value={roomType.roomType}>
+                        {roomType.roomType}
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <div>
                   <label className="block text-sm font-semibold text-text-main-light dark:text-text-main-dark mb-2">
-                    Price Per Night * ($)
+                    Price Per Night (Derived from Contract)
                   </label>
-                  <input
-                    type="number"
-                    required
-                    min="0"
-                    step="0.01"
-                    value={formData.pricePerNight}
-                    onChange={(e) => setFormData({...formData, pricePerNight: e.target.value})}
-                    className="w-full px-4 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-text-main-light dark:text-text-main-dark focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
-                    placeholder="350"
-                  />
+                  <div className="w-full px-4 py-2 bg-slate-100 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-lg text-text-main-light dark:text-text-main-dark min-h-[42px] flex items-center">
+                    {selectedRoomTypeDetails ? `₹${selectedRoomTypeDetails.nightlyRate.toLocaleString()}` : 'Select a room type'}
+                  </div>
                 </div>
               </div>
+
+              {selectedRoomTypeDetails?.inclusions && (
+                <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-700 dark:border-blue-900/40 dark:bg-blue-900/20 dark:text-blue-300">
+                  <span className="font-semibold">Contract Inclusions:</span> {selectedRoomTypeDetails.inclusions}
+                </div>
+              )}
 
               <div className="flex items-center gap-3 pt-2">
                 <input
@@ -591,9 +599,10 @@ export default function BookingsClient() {
                 </button>
                 <button
                   type="submit"
+                  disabled={isSavingBooking}
                   className="flex-1 px-4 py-2.5 bg-primary hover:bg-blue-700 text-white rounded-lg text-sm font-semibold shadow-sm hover:shadow-md hover:shadow-primary/30 transition-all"
                 >
-                  Add Booking
+                  {isSavingBooking ? 'Saving...' : 'Add Booking'}
                 </button>
               </div>
             </form>

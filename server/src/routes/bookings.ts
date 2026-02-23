@@ -1,0 +1,761 @@
+import { Router } from "express";
+import fs from "node:fs";
+import multer from "multer";
+import { z } from "zod";
+import { pool, query } from "../db.js";
+import { requireAuth } from "../middleware/auth.js";
+import { deleteBillFileFromCloudinary } from "../services/cloudStorage.js";
+import {
+  deleteBillFromSupabase,
+  isSupabaseStorageConfigured,
+  uploadBillFileToSupabase
+} from "../services/supabaseStorage.js";
+import { sendCorporateInvoiceCoverLetterEmail } from "../services/mailer.js";
+
+const router = Router();
+
+const createBookingSchema = z.object({
+  bookingNumber: z.string().min(2).max(60),
+  organizationId: z.string().min(2).max(40),
+  employeeId: z.string().uuid(),
+  roomType: z.string().min(2).max(120),
+  checkInDate: z.string().min(8).max(20),
+  checkOutDate: z.string().min(8).max(20),
+  gstApplicable: z.boolean().default(false),
+  status: z.enum(["pending", "confirmed", "checked-in", "checked-out"]).default("pending")
+});
+
+const bookingBillsSchema = z.object({
+  billCategory: z.string().min(2).max(120),
+  fileName: z.string().min(1).max(255).optional(),
+  billAmount: z.coerce.number().min(0).max(10_000_000).optional(),
+  mimeType: z.string().max(120).optional().nullable(),
+  fileSize: z.coerce.number().int().min(0).max(200_000_000).optional().nullable(),
+  notes: z.string().max(500).optional().nullable()
+});
+
+const billUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 20 * 1024 * 1024
+  }
+});
+
+const sendInvoiceSchema = z.object({
+  recipientEmail: z.preprocess(
+    (v) => (v === "" ? null : v),
+    z.string().email().max(320).optional().nullable()
+  ),
+  ccEmail: z.preprocess(
+    (v) => (v === "" ? null : v),
+    z.string().email().max(320).optional().nullable()
+  ),
+  portalBaseUrl: z.preprocess(
+    (v) => (v === "" ? null : v),
+    z.string().url().max(500).optional().nullable()
+  ),
+  bills: z
+    .array(
+      z.object({
+        category: z.string().min(2).max(120),
+        fileName: z.string().min(1).max(255)
+      })
+    )
+    .optional()
+    .default([])
+});
+
+const normalizeOptional = (value?: string | null) => {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
+};
+
+const getDaysBetween = (checkInDate: string, checkOutDate: string) => {
+  const checkIn = new Date(checkInDate);
+  const checkOut = new Date(checkOutDate);
+  return Math.max(1, Math.ceil((checkOut.getTime() - checkIn.getTime()) / (1000 * 60 * 60 * 24)));
+};
+
+const parsePositiveRate = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+
+  return null;
+};
+
+const resolveNightlyRate = (roomRate: any): number | null => {
+  const candidates = [
+    roomRate?.singleOccupancy?.cp,
+    roomRate?.singleOccupancy?.ep,
+    roomRate?.singleOccupancy?.map,
+    roomRate?.singleOccupancy?.ap,
+    roomRate?.doubleOccupancy?.cp,
+    roomRate?.doubleOccupancy?.ep,
+    roomRate?.doubleOccupancy?.map,
+    roomRate?.doubleOccupancy?.ap
+  ];
+
+  for (const candidate of candidates) {
+    const rate = parsePositiveRate(candidate);
+    if (rate !== null) {
+      return rate;
+    }
+  }
+
+  return null;
+};
+
+const getLatestSignedContract = async (organizationId: string) => {
+  const contractResult = await query(
+    `SELECT id, contract_data
+     FROM organization_contracts
+     WHERE organization_id = $1 AND status = 'signed'
+     ORDER BY signed_at DESC NULLS LAST, created_at DESC
+     LIMIT 1`,
+    [organizationId]
+  );
+
+  if (contractResult.rowCount === 0) {
+    return null;
+  }
+
+  return contractResult.rows[0];
+};
+
+router.use(requireAuth);
+
+router.get("/meta/organizations", async (req, res, next) => {
+  try {
+    const result = await query(
+      `SELECT id, name, contact_email
+       FROM organizations
+       WHERE is_active = true
+       ORDER BY name ASC`
+    );
+
+    const organizations = result.rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      contactEmail: row.contact_email
+    }));
+
+    return res.status(200).json({ organizations });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/meta/organizations/:organizationId/employees", async (req, res, next) => {
+  try {
+    const organizationId = req.params.organizationId;
+
+    const result = await query(
+      `SELECT id, employee_code, full_name, email, department, designation
+       FROM corporate_employees
+       WHERE organization_id = $1 AND is_active = true
+       ORDER BY full_name ASC`,
+      [organizationId]
+    );
+
+    const employees = result.rows.map((row) => ({
+      id: row.id,
+      employeeCode: row.employee_code,
+      fullName: row.full_name,
+      email: row.email,
+      department: row.department,
+      designation: row.designation
+    }));
+
+    return res.status(200).json({ employees });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/meta/organizations/:organizationId/room-types", async (req, res, next) => {
+  try {
+    const organizationId = req.params.organizationId;
+    const contract = await getLatestSignedContract(organizationId);
+
+    if (!contract) {
+      return res.status(404).json({ error: { message: "No signed contract found for this organization" } });
+    }
+
+    const roomRates = Array.isArray(contract.contract_data?.roomRates)
+      ? contract.contract_data.roomRates
+      : [];
+
+    const roomTypes = roomRates
+      .map((roomRate: any) => {
+        const roomType = typeof roomRate?.roomType === "string" ? roomRate.roomType.trim() : "";
+        const nightlyRate = resolveNightlyRate(roomRate);
+        return {
+          roomType,
+          nightlyRate,
+          inclusions: typeof roomRate?.inclusions === "string" ? roomRate.inclusions : null
+        };
+      })
+      .filter((item: { roomType: string; nightlyRate: number | null }) => item.roomType.length > 0 && item.nightlyRate !== null)
+      .map((item: { roomType: string; nightlyRate: number | null; inclusions: string | null }) => ({
+        roomType: item.roomType,
+        nightlyRate: Number(item.nightlyRate),
+        inclusions: item.inclusions
+      }));
+
+    return res.status(200).json({
+      contractId: contract.id,
+      roomTypes
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/", async (req, res, next) => {
+  try {
+    const status = typeof req.query.status === "string" ? req.query.status : null;
+    const fromDate = typeof req.query.fromDate === "string" ? req.query.fromDate : null;
+    const toDate = typeof req.query.toDate === "string" ? req.query.toDate : null;
+
+    const result = await query(
+      `SELECT b.id, b.booking_number, b.organization_id, b.employee_id, b.room_type,
+              b.check_in_date, b.check_out_date, b.nights, b.price_per_night,
+              b.total_price, b.gst_applicable, b.status, b.invoice_id, b.sent_at,
+              o.name AS organization_name,
+              e.full_name AS employee_name,
+              e.employee_code,
+              i.invoice_number
+       FROM hotel_bookings b
+       JOIN organizations o ON o.id = b.organization_id
+       JOIN corporate_employees e ON e.id = b.employee_id
+       LEFT JOIN corporate_invoices i ON i.id = b.invoice_id
+       WHERE ($1::text IS NULL OR b.status = $1)
+         AND ($2::date IS NULL OR b.check_in_date >= $2::date)
+         AND ($3::date IS NULL OR b.check_out_date <= $3::date)
+       ORDER BY b.created_at DESC`,
+      [status, fromDate, toDate]
+    );
+
+    const bookings = result.rows.map((row) => ({
+      id: row.id,
+      bookingNumber: row.booking_number,
+      organizationId: row.organization_id,
+      organizationName: row.organization_name,
+      employeeId: row.employee_id,
+      employeeName: row.employee_name,
+      employeeCode: row.employee_code,
+      roomType: row.room_type,
+      checkInDate: row.check_in_date,
+      checkOutDate: row.check_out_date,
+      nights: Number(row.nights),
+      pricePerNight: Number(row.price_per_night),
+      totalPrice: Number(row.total_price),
+      gstApplicable: Boolean(row.gst_applicable),
+      status: row.status,
+      invoiceId: row.invoice_id,
+      invoiceNumber: row.invoice_number,
+      sentAt: row.sent_at
+    }));
+
+    return res.status(200).json({ bookings });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/", async (req, res, next) => {
+  try {
+    const payload = createBookingSchema.parse(req.body);
+
+    const contract = await getLatestSignedContract(payload.organizationId);
+    if (!contract) {
+      return res.status(400).json({ error: { message: "Selected organization does not have a signed contract" } });
+    }
+
+    const roomRates = Array.isArray(contract.contract_data?.roomRates)
+      ? contract.contract_data.roomRates
+      : [];
+
+    const selectedRoom = roomRates.find((roomRate: any) => {
+      const contractRoomType = typeof roomRate?.roomType === "string" ? roomRate.roomType.trim().toLowerCase() : "";
+      return contractRoomType.length > 0 && contractRoomType === payload.roomType.trim().toLowerCase();
+    });
+
+    if (!selectedRoom) {
+      return res.status(400).json({ error: { message: "Room type is not allowed by the signed contract" } });
+    }
+
+    const contractNightlyRate = resolveNightlyRate(selectedRoom);
+    if (contractNightlyRate === null) {
+      return res.status(400).json({ error: { message: "Selected room type has no valid rate in the signed contract" } });
+    }
+
+    const nights = getDaysBetween(payload.checkInDate, payload.checkOutDate);
+    const totalPrice = Number((nights * contractNightlyRate).toFixed(2));
+
+    const result = await query(
+      `INSERT INTO hotel_bookings (
+         booking_number,
+         organization_id,
+         employee_id,
+         room_type,
+         check_in_date,
+         check_out_date,
+         nights,
+         price_per_night,
+         total_price,
+         gst_applicable,
+         status,
+         created_by
+       )
+       VALUES ($1, $2, $3, $4, $5::date, $6::date, $7, $8, $9, $10, $11, $12)
+       RETURNING id, booking_number, organization_id, employee_id, room_type,
+                 check_in_date, check_out_date, nights, price_per_night,
+                 total_price, gst_applicable, status, created_at`,
+      [
+        payload.bookingNumber.trim().toUpperCase(),
+        payload.organizationId,
+        payload.employeeId,
+        payload.roomType.trim(),
+        payload.checkInDate,
+        payload.checkOutDate,
+        nights,
+        contractNightlyRate,
+        totalPrice,
+        payload.gstApplicable,
+        payload.status,
+        req.user?.id ?? null
+      ]
+    );
+
+    const booking = result.rows[0];
+    return res.status(201).json({
+      booking: {
+        id: booking.id,
+        bookingNumber: booking.booking_number,
+        organizationId: booking.organization_id,
+        employeeId: booking.employee_id,
+        roomType: booking.room_type,
+        checkInDate: booking.check_in_date,
+        checkOutDate: booking.check_out_date,
+        nights: Number(booking.nights),
+        pricePerNight: Number(booking.price_per_night),
+        totalPrice: Number(booking.total_price),
+        gstApplicable: Boolean(booking.gst_applicable),
+        status: booking.status,
+        createdAt: booking.created_at
+      }
+    });
+  } catch (error: any) {
+    if (error?.code === "23505") {
+      return res.status(409).json({ error: { message: "Booking number already exists" } });
+    }
+    return next(error);
+  }
+});
+
+router.get("/:bookingId", async (req, res, next) => {
+  try {
+    const bookingId = req.params.bookingId;
+    const result = await query(
+      `SELECT b.id, b.booking_number, b.organization_id, b.employee_id, b.room_type,
+              b.check_in_date, b.check_out_date, b.nights, b.price_per_night,
+              b.total_price, b.gst_applicable, b.status, b.invoice_id, b.sent_at,
+              o.name AS organization_name, o.contact_email,
+              e.full_name AS employee_name, e.employee_code
+       FROM hotel_bookings b
+       JOIN organizations o ON o.id = b.organization_id
+       JOIN corporate_employees e ON e.id = b.employee_id
+       WHERE b.id = $1`,
+      [bookingId]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: { message: "Booking not found" } });
+    }
+
+    const row = result.rows[0];
+    return res.status(200).json({
+      booking: {
+        id: row.id,
+        bookingNumber: row.booking_number,
+        organizationId: row.organization_id,
+        organizationName: row.organization_name,
+        organizationEmail: row.contact_email,
+        employeeId: row.employee_id,
+        employeeName: row.employee_name,
+        employeeCode: row.employee_code,
+        roomType: row.room_type,
+        checkInDate: row.check_in_date,
+        checkOutDate: row.check_out_date,
+        nights: Number(row.nights),
+        pricePerNight: Number(row.price_per_night),
+        totalPrice: Number(row.total_price),
+        gstApplicable: Boolean(row.gst_applicable),
+        status: row.status,
+        invoiceId: row.invoice_id,
+        sentAt: row.sent_at
+      }
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/:bookingId/bills", async (req, res, next) => {
+  try {
+    const bookingId = req.params.bookingId;
+    const result = await query(
+      `SELECT id, bill_category, file_name, storage_path, cloud_url, storage_provider,
+              cloud_public_id, bill_amount, mime_type, file_size, notes, created_at
+       FROM booking_bills
+       WHERE booking_id = $1
+       ORDER BY created_at DESC`,
+      [bookingId]
+    );
+
+    const bills = result.rows.map((row) => ({
+      id: row.id,
+      bookingId,
+      billCategory: row.bill_category,
+      fileName: row.file_name,
+      hasFile: Boolean(row.storage_path || row.cloud_url || row.cloud_public_id),
+      fileUrl: row.cloud_url,
+      storageProvider: row.storage_provider,
+      billAmount: Number(row.bill_amount ?? 0),
+      mimeType: row.mime_type,
+      fileSize: row.file_size,
+      notes: row.notes,
+      createdAt: row.created_at
+    }));
+
+    return res.status(200).json({ bills });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/:bookingId/bills", billUpload.single("file"), async (req, res, next) => {
+  try {
+    const bookingId = req.params.bookingId;
+    const payload = bookingBillsSchema.parse(req.body);
+    const uploadedFile = req.file;
+
+    if (!uploadedFile) {
+      return res.status(400).json({ error: { message: "Attach a file before saving bill" } });
+    }
+
+    if (!isSupabaseStorageConfigured()) {
+      return res.status(500).json({ error: { message: "Supabase storage is not configured" } });
+    }
+
+    const booking = await query(`SELECT id FROM hotel_bookings WHERE id = $1`, [bookingId]);
+    if (booking.rowCount === 0) {
+      return res.status(404).json({ error: { message: "Booking not found" } });
+    }
+
+    const uploadResult = await uploadBillFileToSupabase({
+      bookingId,
+      originalFileName: uploadedFile.originalname,
+      mimeType: uploadedFile.mimetype,
+      fileBuffer: uploadedFile.buffer
+    });
+
+    const result = await query(
+      `INSERT INTO booking_bills (booking_id, bill_category, file_name, storage_path, cloud_url, cloud_public_id, storage_provider, bill_amount, mime_type, file_size, notes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       RETURNING id, bill_category, file_name, storage_path, cloud_url, storage_provider, bill_amount, mime_type, file_size, notes, created_at`,
+      [
+        bookingId,
+        payload.billCategory.trim(),
+        uploadedFile.originalname.trim(),
+        null,
+        null,
+        uploadResult.objectPath,
+        "supabase",
+        payload.billAmount ?? 0,
+        uploadedFile.mimetype ?? normalizeOptional(payload.mimeType),
+        uploadedFile.size ?? payload.fileSize ?? null,
+        normalizeOptional(payload.notes)
+      ]
+    );
+
+    const row = result.rows[0];
+    return res.status(201).json({
+      bill: {
+        id: row.id,
+        bookingId,
+        billCategory: row.bill_category,
+        fileName: row.file_name,
+        hasFile: Boolean(row.storage_path || row.cloud_url || uploadResult.objectPath),
+        fileUrl: row.cloud_url,
+        storageProvider: row.storage_provider,
+        billAmount: Number(row.bill_amount ?? 0),
+        mimeType: row.mime_type,
+        fileSize: row.file_size,
+        notes: row.notes,
+        createdAt: row.created_at
+      }
+    });
+  } catch (error: any) {
+    const message = error instanceof Error ? error.message : "Failed to save bill";
+    if (message.toLowerCase().includes("supabase upload failed")) {
+      return res.status(502).json({ error: { message } });
+    }
+    if (message.toLowerCase().includes("bucket") && message.toLowerCase().includes("not")) {
+      return res.status(500).json({ error: { message: "Supabase bucket is missing. Create the storage bucket and retry." } });
+    }
+    return next(error);
+  }
+});
+
+router.delete("/:bookingId/bills/:billId", async (req, res, next) => {
+  try {
+    const { bookingId, billId } = req.params;
+
+    const current = await query(
+      `SELECT id, storage_path, cloud_public_id, storage_provider
+       FROM booking_bills
+       WHERE id = $1 AND booking_id = $2
+       LIMIT 1`,
+      [billId, bookingId]
+    );
+
+    if (current.rowCount === 0) {
+      return res.status(404).json({ error: { message: "Bill not found" } });
+    }
+
+    const bill = current.rows[0];
+
+    const result = await query(
+      `DELETE FROM booking_bills WHERE id = $1 AND booking_id = $2 RETURNING id`,
+      [billId, bookingId]
+    );
+
+    if (bill.storage_path && fs.existsSync(bill.storage_path)) {
+      fs.unlinkSync(bill.storage_path);
+    }
+
+    if (bill.storage_provider === "supabase") {
+      await deleteBillFromSupabase(bill.cloud_public_id);
+    } else if (bill.storage_provider === "cloudinary") {
+      await deleteBillFileFromCloudinary(bill.cloud_public_id);
+    }
+
+    return res.status(200).json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/:bookingId/send", async (req, res, next) => {
+  const client = await pool.connect();
+
+  try {
+    const bookingId = req.params.bookingId;
+    const payload = sendInvoiceSchema.parse(req.body);
+
+    await client.query("BEGIN");
+
+    const bookingResult = await client.query(
+      `SELECT b.id, b.booking_number, b.organization_id, b.employee_id, b.room_type,
+              b.check_in_date, b.check_out_date, b.nights, b.total_price,
+              b.invoice_id, b.sent_at,
+              o.name AS organization_name, o.contact_email,
+              e.full_name AS employee_name, e.employee_code
+       FROM hotel_bookings b
+       JOIN organizations o ON o.id = b.organization_id
+       JOIN corporate_employees e ON e.id = b.employee_id
+       WHERE b.id = $1
+       FOR UPDATE`,
+      [bookingId]
+    );
+
+    if (bookingResult.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: { message: "Booking not found" } });
+    }
+
+    const booking = bookingResult.rows[0];
+
+    if (booking.invoice_id) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: { message: "Invoice already sent for this booking" } });
+    }
+
+    const billsResult = await client.query(
+      `SELECT id, bill_category, file_name, bill_amount, mime_type, file_size
+       FROM booking_bills
+       WHERE booking_id = $1
+       ORDER BY created_at ASC`,
+      [bookingId]
+    );
+
+    const payloadBills = payload.bills ?? [];
+    const dbBills = billsResult.rows ?? [];
+    const extraBillsTotal = dbBills.reduce((sum, bill) => sum + Number(bill.bill_amount ?? 0), 0);
+    const invoiceAmount = Number((Number(booking.total_price) + extraBillsTotal).toFixed(2));
+
+    if (dbBills.length === 0 && payloadBills.length === 0) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: { message: "Attach at least one bill before sending" } });
+    }
+
+    const recipientEmail = normalizeOptional(payload.recipientEmail)?.toLowerCase() ?? booking.contact_email;
+    if (!recipientEmail) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: { message: "Recipient email not found for organization" } });
+    }
+
+    const ccEmail = normalizeOptional(payload.ccEmail)?.toLowerCase() ?? null;
+    const invoiceDate = new Date(booking.check_out_date);
+    const dueDate = new Date(invoiceDate);
+    dueDate.setDate(dueDate.getDate() + 15);
+
+    const invoiceNumber = `INV-${String(booking.booking_number).replace(/[^A-Z0-9]/gi, "").toUpperCase()}-${Date.now()}`;
+
+    const invoiceInsert = await client.query(
+      `INSERT INTO corporate_invoices (
+         booking_id,
+         organization_id,
+         employee_id,
+         invoice_number,
+         invoice_date,
+         due_date,
+         amount,
+         status,
+         recipient_email,
+         cc_email,
+         sent_at
+       )
+       VALUES ($1, $2, $3, $4, $5::date, $6::date, $7, 'unpaid', $8, $9, now())
+       RETURNING id, invoice_number, invoice_date, due_date, amount, status, sent_at`,
+      [
+        booking.id,
+        booking.organization_id,
+        booking.employee_id,
+        invoiceNumber,
+        invoiceDate.toISOString().slice(0, 10),
+        dueDate.toISOString().slice(0, 10),
+        invoiceAmount,
+        recipientEmail,
+        ccEmail
+      ]
+    );
+
+    const invoice = invoiceInsert.rows[0];
+
+    await client.query(
+      `UPDATE hotel_bookings
+       SET invoice_id = $2,
+           sent_at = now(),
+           status = 'checked-out'
+       WHERE id = $1`,
+      [booking.id, invoice.id]
+    );
+
+    await client.query(
+      `INSERT INTO employee_stays (
+         organization_id,
+         booking_id,
+         employee_id,
+         property_name,
+         check_in_date,
+         check_out_date,
+         nights,
+         total_amount,
+         status,
+         invoice_id
+       )
+       VALUES ($1, $2, $3, $4, $5::date, $6::date, $7, $8, 'invoiced', $9)
+       ON CONFLICT (booking_id)
+       DO UPDATE SET
+         employee_id = EXCLUDED.employee_id,
+         property_name = EXCLUDED.property_name,
+         check_in_date = EXCLUDED.check_in_date,
+         check_out_date = EXCLUDED.check_out_date,
+         nights = EXCLUDED.nights,
+         total_amount = EXCLUDED.total_amount,
+         status = EXCLUDED.status,
+         invoice_id = EXCLUDED.invoice_id`,
+      [
+        booking.organization_id,
+        booking.id,
+        booking.employee_id,
+        "Grand Hotel & Resorts",
+        booking.check_in_date,
+        booking.check_out_date,
+        booking.nights,
+        invoiceAmount,
+        invoice.id
+      ]
+    );
+
+    await client.query("COMMIT");
+
+    const portalBase = payload.portalBaseUrl?.replace(/\/$/, "") || "http://localhost:3000";
+    const invoicesPortalLink = `${portalBase}/corporate-portal/invoices`;
+
+    await sendCorporateInvoiceCoverLetterEmail({
+      recipientEmail,
+      ccEmail,
+      organizationName: booking.organization_name,
+      invoiceNumber: invoice.invoice_number,
+      bookingNumber: booking.booking_number,
+      guestName: booking.employee_name,
+      amount: Number(invoice.amount),
+      dueDate: invoice.due_date,
+      propertyName: "Grand Hotel & Resorts",
+      bills:
+        dbBills.length > 0
+          ? dbBills.map((bill) => ({
+              category: bill.bill_category,
+              fileName: bill.file_name
+            }))
+          : payloadBills,
+      invoicesPortalLink
+    });
+
+    return res.status(200).json({
+      ok: true,
+      invoice: {
+        id: invoice.id,
+        invoiceNumber: invoice.invoice_number,
+        invoiceDate: invoice.invoice_date,
+        dueDate: invoice.due_date,
+        amount: Number(invoice.amount),
+        status: invoice.status,
+        sentAt: invoice.sent_at
+      },
+      recipientEmail,
+      invoicesPortalLink
+    });
+  } catch (error: any) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      // no-op
+    }
+
+    if (error?.code === "42703") {
+      return res.status(500).json({ error: { message: "Database schema is outdated. Run npm run db:setup in server and retry." } });
+    }
+
+    return next(error);
+  } finally {
+    client.release();
+  }
+});
+
+export default router;

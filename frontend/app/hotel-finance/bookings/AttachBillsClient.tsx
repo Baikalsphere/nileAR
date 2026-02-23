@@ -4,7 +4,10 @@ import Header from '@/app/components/Header'
 import Sidebar from '@/app/components/Sidebar'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useState, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { tokenStorage } from '@/lib/auth'
+import { addBookingBill, BookingRecord, fetchBookingById } from '@/lib/bookingsApi'
+import { saveAttachments, type AttachedDocumentsMeta } from './data'
 
 interface Charge {
   id: string
@@ -16,16 +19,18 @@ interface Charge {
   fileName?: string
 }
 
-interface BookingInfo {
-  id: string
-  bookingNumber: string
-  customerName: string
-  corporationName: string
-  roomType: string
-  checkInDate: string
-  checkOutDate: string
-  totalPrice: number
-  status: string
+const BILL_KEY_MAP: Record<string, keyof AttachedDocumentsMeta> = {
+  'Laundry Service': 'laundry',
+  'Food & Beverage': 'foodBeverage',
+  'Room Service': 'roomService',
+  'Bar & Lounge': 'barLounge',
+  'Spa & Wellness': 'spaWellness',
+  Minibar: 'minibar',
+  'Conference & Banquet': 'conferenceHall',
+  'Parking & Valet': 'parking',
+  'Phone & Communication': 'miscellaneous',
+  Transportation: 'miscellaneous',
+  Miscellaneous: 'miscellaneous',
 }
 
 const SERVICE_TYPES = [
@@ -44,6 +49,10 @@ const SERVICE_TYPES = [
 
 export default function AttachBillsClient({ bookingId }: { bookingId: string }) {
   const router = useRouter()
+  const [booking, setBooking] = useState<BookingRecord | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [isSubmitting, setIsSubmitting] = useState(false)
   const [charges, setCharges] = useState<Charge[]>([])
   const [gstInvoice, setGstInvoice] = useState<{ file: File | null; fileName?: string }>({ file: null })
   const [dragOver, setDragOver] = useState<string | null>(null)
@@ -51,18 +60,28 @@ export default function AttachBillsClient({ bookingId }: { bookingId: string }) 
   const fileRefs = useRef<Record<string, HTMLInputElement | null>>({})
   const gstRef = useRef<HTMLInputElement>(null)
 
-  // Mock booking data - in real app, fetch from API
-  const booking: BookingInfo = {
-    id: bookingId,
-    bookingNumber: `BK-${bookingId.padStart(3, '0')}`,
-    customerName: 'Sarah Johnson',
-    corporationName: 'Tech Innovations Inc',
-    roomType: 'Deluxe Suite',
-    checkInDate: '2024-02-12',
-    checkOutDate: '2024-02-14',
-    totalPrice: 1750,
-    status: 'confirmed',
-  }
+  useEffect(() => {
+    const token = tokenStorage.get()
+    if (!token) {
+      router.replace('/hotel-finance/login')
+      return
+    }
+
+    const loadBooking = async () => {
+      setIsLoading(true)
+      setLoadError(null)
+      try {
+        const response = await fetchBookingById(bookingId)
+        setBooking(response.booking)
+      } catch (error) {
+        setLoadError(error instanceof Error ? error.message : 'Failed to load booking')
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    void loadBooking()
+  }, [bookingId, router])
 
   const handleFileSelect = (chargeId: string, file: File | null) => {
     if (!file) return
@@ -124,19 +143,117 @@ export default function AttachBillsClient({ bookingId }: { bookingId: string }) 
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   }
 
-  const handleSubmit = () => {
+  const parseChargeAmount = (value: string) => {
+    const parsed = Number(value)
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      return 0
+    }
+    return parsed
+  }
+
+  const uploadedCharges = charges.filter((charge) => charge.file)
+  const extraBillsTotal = uploadedCharges.reduce((sum, charge) => sum + parseChargeAmount(charge.amount), 0)
+  const updatedInvoiceTotal = booking ? booking.totalPrice + extraBillsTotal : extraBillsTotal
+
+  const handleSubmit = async () => {
     const hasCharges = charges.length > 0
-    const hasAttachments = charges.some(c => c.file) || gstInvoice.file
     
     if (!hasCharges && !gstInvoice.file) {
       alert('Please add at least one charge or upload a GST e-invoice.')
       return
     }
 
-    console.log('Charges:', charges)
-    console.log('GST Invoice:', gstInvoice)
-    alert('Attachments saved successfully! Proceeding to send...')
+    setIsSubmitting(true)
+    try {
+      const attachedDocuments: AttachedDocumentsMeta = {}
+
+      for (const charge of charges) {
+        if (!charge.file) continue
+
+        const parsedAmount = Number(charge.amount)
+        if (!Number.isFinite(parsedAmount) || parsedAmount < 0) {
+          alert(`Enter a valid amount for ${charge.serviceType}`)
+          setIsSubmitting(false)
+          return
+        }
+
+        const key = BILL_KEY_MAP[charge.serviceType] ?? 'miscellaneous'
+        attachedDocuments[key] = {
+          name: charge.file.name,
+          size: charge.file.size,
+          type: charge.file.type,
+        }
+
+        await addBookingBill(bookingId, {
+          billCategory: charge.serviceType,
+          fileName: charge.file.name,
+          file: charge.file,
+          billAmount: parsedAmount,
+          mimeType: charge.file.type || null,
+          fileSize: charge.file.size,
+          notes: charge.notes || null,
+        })
+      }
+
+      if (gstInvoice.file) {
+        attachedDocuments.miscellaneous = {
+          name: gstInvoice.file.name,
+          size: gstInvoice.file.size,
+          type: gstInvoice.file.type,
+        }
+
+        await addBookingBill(bookingId, {
+          billCategory: 'GST E-Invoice',
+          fileName: gstInvoice.file.name,
+          file: gstInvoice.file,
+          billAmount: 0,
+          mimeType: gstInvoice.file.type || null,
+          fileSize: gstInvoice.file.size,
+          notes: null,
+        })
+      }
+
+      saveAttachments(bookingId, attachedDocuments)
+      alert('Attachments saved successfully! Proceeding to send...')
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Failed to save attachments')
+      setIsSubmitting(false)
+      return
+    }
+
+    setIsSubmitting(false)
     router.push(`/hotel-finance/bookings/${bookingId}/send`)
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex h-screen w-full overflow-hidden bg-background-light dark:bg-background-dark text-text-main-light dark:text-text-main-dark">
+        <Sidebar title="Hotel Finance" logoIcon="domain" />
+        <main className="flex-1 flex items-center justify-center">Loading booking...</main>
+      </div>
+    )
+  }
+
+  if (loadError || !booking) {
+    return (
+      <div className="flex h-screen w-full overflow-hidden bg-background-light dark:bg-background-dark text-text-main-light dark:text-text-main-dark">
+        <Sidebar title="Hotel Finance" logoIcon="domain" />
+        <main className="flex-1 flex flex-col h-full overflow-hidden">
+          <Header />
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-center">
+              <span className="material-symbols-outlined text-[64px] text-slate-300 dark:text-slate-600">error</span>
+              <h2 className="text-xl font-bold mt-4">Booking Not Found</h2>
+              {loadError && <p className="text-sm text-red-600 mt-2">{loadError}</p>}
+              <Link href="/hotel-finance/bookings" className="mt-6 inline-flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg font-semibold">
+                <span className="material-symbols-outlined text-[18px]">arrow_back</span>
+                Back to Bookings
+              </Link>
+            </div>
+          </div>
+        </main>
+      </div>
+    )
   }
 
   return (
@@ -176,12 +293,14 @@ export default function AttachBillsClient({ bookingId }: { bookingId: string }) 
                         {booking.status}
                       </span>
                     </div>
-                    <h1 className="text-2xl font-bold">{booking.corporationName}</h1>
-                    <p className="text-blue-100 mt-1">Guest: {booking.customerName} • {booking.roomType}</p>
+                    <h1 className="text-2xl font-bold">{booking.organizationName}</h1>
+                    <p className="text-blue-100 mt-1">Guest: {booking.employeeName} • {booking.roomType}</p>
                   </div>
                   <div className="text-right">
-                    <p className="text-blue-200 text-sm">Total Booking Amount</p>
-                    <p className="text-3xl font-extrabold">₹{booking.totalPrice.toLocaleString()}</p>
+                    <p className="text-blue-200 text-sm">Contract Base Amount</p>
+                    <p className="text-2xl font-extrabold">₹{booking.totalPrice.toLocaleString()}</p>
+                    <p className="text-blue-200 text-sm mt-1">Extra Bills: ₹{extraBillsTotal.toLocaleString()}</p>
+                    <p className="text-white text-lg font-bold mt-1">Updated Total: ₹{updatedInvoiceTotal.toLocaleString()}</p>
                     <p className="text-blue-200 text-sm mt-1">
                       Check-in: {new Date(booking.checkInDate).toLocaleDateString('en-IN')}
                     </p>
@@ -437,9 +556,10 @@ export default function AttachBillsClient({ bookingId }: { bookingId: string }) 
               </Link>
               <button
                 onClick={handleSubmit}
+                disabled={isSubmitting}
                 className="flex items-center gap-2 px-6 py-2.5 bg-primary hover:bg-blue-700 text-white rounded-xl font-semibold transition-all duration-200 shadow-sm hover:shadow-lg hover:shadow-primary/30"
               >
-                <span>Continue to Send</span>
+                <span>{isSubmitting ? 'Saving...' : 'Continue to Send'}</span>
                 <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
               </button>
             </div>

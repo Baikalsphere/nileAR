@@ -1,92 +1,25 @@
 "use client"
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import Sidebar from '@/app/components/Sidebar'
 import Header from '@/app/components/Header'
+import { CorporateEmployeeStay, corporateTokenStorage, fetchCorporateEmployeeStays } from '@/lib/corporateAuth'
 
 interface Stay {
   id: string
   guestName: string
   employeeId: string
-  costCenter: string
+  department?: string
   property: string
   checkInDate: string
   checkOutDate: string
   nights: number
   totalAmount: number
   status: 'Pending Invoice' | 'Paid' | 'Invoiced'
-  avatar?: string
   initials?: string
 }
-
-const mockStays: Stay[] = [
-  {
-    id: '1',
-    guestName: 'Sarah Jenkins',
-    employeeId: 'EMP-9021',
-    costCenter: 'CC-Sales-NW',
-    property: 'Grand Hyatt Seattle',
-    checkInDate: 'Oct 12',
-    checkOutDate: 'Oct 15',
-    nights: 3,
-    totalAmount: 845.0,
-    status: 'Pending Invoice',
-    avatar: 'https://lh3.googleusercontent.com/aida-public/AB6AXuCBO2JungDiIsOj6EHeNaCraFgZR9ef1FIpor0FzoDV7Bn_JivqFuWPT9ZtL2kvIcGn2XiWxiCdjoE_-ZZbmW3ssoFh2OXoGX5mdh_SNewo6rj9I8iq9MdE48gVBQTNznpcikzDpiV_zPS-m8LyqdY-gJM162nhMKuew6f6GemveEBoTQduzXhV49ykZTIu9V8oczju6s9k0UplaytEoxguTqiF084-RHByb8Zqvt4-I6wSWBzwikt5aeOk16lfQVDsPkJ2XLfnkNA'
-  },
-  {
-    id: '2',
-    guestName: 'Michael Jordan',
-    employeeId: 'EMP-4523',
-    costCenter: 'CC-Eng-Platform',
-    property: 'Marriott Marquis SF',
-    checkInDate: 'Oct 10',
-    checkOutDate: 'Oct 14',
-    nights: 4,
-    totalAmount: 1240.0,
-    status: 'Paid',
-    initials: 'MJ'
-  },
-  {
-    id: '3',
-    guestName: 'Emily Chen',
-    employeeId: 'EMP-8832',
-    costCenter: 'CC-Mkt-Global',
-    property: 'W Hotel Austin',
-    checkInDate: 'Oct 08',
-    checkOutDate: 'Oct 09',
-    nights: 1,
-    totalAmount: 320.0,
-    status: 'Invoiced',
-    avatar: 'https://lh3.googleusercontent.com/aida-public/AB6AXuBi4R2FniJj_Z9UxmT8ILkZQ1EmK1b7dTYUx7cIkKaVTDjhalF6nXJNdvbYNBO9XRIkoTBYmWZ8b2IHTdpwP_sjhJpgaCjKsTa2vTLzDnZ4Cb6HWeIMHX5c6Yyk9NX4rZK5hjUTAxtmJeCv0C-932CNGjXHGyuYW3Dgc02licVr1Bebk1Z8enXXnik5Pgy0n-VmPxzQChU0EiwAf4sK-v6JSh6-NHZOz7d0R7QZqwLGMcCcwerFUycENzj8a9Lvo0j91QhlGVrj-n0'
-  },
-  {
-    id: '4',
-    guestName: 'David Kim',
-    employeeId: 'EMP-1120',
-    costCenter: 'CC-Ops-Logistics',
-    property: 'Hilton Garden Inn NYC',
-    checkInDate: 'Oct 05',
-    checkOutDate: 'Oct 12',
-    nights: 7,
-    totalAmount: 2150.0,
-    status: 'Pending Invoice',
-    avatar: 'https://lh3.googleusercontent.com/aida-public/AB6AXuDjGV0kjXP2rNfxqDblH-UTj77bgq45A2u6mNNql47Gesv_qVQAfXdX7KIUmIbsDQtfxpZttB9nn7EPZubJlwZsBZhTTCoMQFvWtDuWP1uJTx1cAcag-bT6AB_D7KY2OW7Gx9P4cXWwsumJ_eKT5cJGJmurBZj4ksWS-c_W-IGgGBf7Wong_vgPv2En1jS2jooGfmfrq0JQ1xGQYtIQbp4ACPZPvg_SNZhksvdhof89ppJGbpuSlAMoYx9XwZlVGNDPP_M46FxLuow'
-  },
-  {
-    id: '5',
-    guestName: 'Amanda Lee',
-    employeeId: 'EMP-3391',
-    costCenter: 'CC-HR-Talent',
-    property: 'Sheraton Boston',
-    checkInDate: 'Oct 01',
-    checkOutDate: 'Oct 03',
-    nights: 2,
-    totalAmount: 590.0,
-    status: 'Paid',
-    initials: 'AL'
-  }
-]
 
 const getStatusColor = (status: Stay['status']) => {
   switch (status) {
@@ -102,18 +35,63 @@ const getStatusColor = (status: Stay['status']) => {
 }
 
 export default function EmployeeStaysClient() {
+  const router = useRouter()
+  const [stays, setStays] = useState<Stay[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set())
 
-  const filteredStays = mockStays.filter(stay =>
+  useEffect(() => {
+    const token = corporateTokenStorage.get()
+    if (!token) {
+      router.replace('/corporate-portal/login')
+      return
+    }
+
+    const loadStays = async () => {
+      setIsLoading(true)
+      setError(null)
+      try {
+        const response = await fetchCorporateEmployeeStays()
+        const mapped: Stay[] = response.stays.map((stay: CorporateEmployeeStay) => ({
+          id: stay.id,
+          guestName: stay.employeeName,
+          employeeId: stay.employeeCode,
+          department: stay.department ?? undefined,
+          property: stay.propertyName,
+          checkInDate: new Date(stay.checkInDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+          checkOutDate: new Date(stay.checkOutDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+          nights: stay.nights,
+          totalAmount: stay.totalAmount,
+          status: stay.status === 'paid' ? 'Paid' : stay.status === 'invoiced' ? 'Invoiced' : 'Pending Invoice',
+          initials: stay.employeeName.split(' ').filter(Boolean).slice(0, 2).map((word) => word[0]?.toUpperCase()).join('')
+        }))
+        setStays(mapped)
+      } catch (loadError) {
+        const message = loadError instanceof Error ? loadError.message : 'Failed to load employee stays'
+        setError(message)
+        if (message.toLowerCase().includes('unauthorized')) {
+          corporateTokenStorage.clear()
+          router.replace('/corporate-portal/login')
+        }
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    void loadStays()
+  }, [router])
+
+  const filteredStays = stays.filter(stay =>
     stay.guestName.toLowerCase().includes(searchQuery.toLowerCase()) ||
     stay.employeeId.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    stay.costCenter.toLowerCase().includes(searchQuery.toLowerCase())
+    (stay.department ?? '').toLowerCase().includes(searchQuery.toLowerCase())
   )
 
   const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.checked) {
-      setSelectedRows(new Set(mockStays.map(s => s.id)))
+      setSelectedRows(new Set(stays.map(s => s.id)))
     } else {
       setSelectedRows(new Set())
     }
@@ -129,9 +107,9 @@ export default function EmployeeStaysClient() {
     setSelectedRows(newSelected)
   }
 
-  const totalSpend = mockStays.reduce((sum, stay) => sum + stay.totalAmount, 0)
-  const activeStays = mockStays.length
-  const pendingInvoices = mockStays.filter(s => s.status === 'Pending Invoice').length
+  const totalSpend = stays.reduce((sum, stay) => sum + stay.totalAmount, 0)
+  const activeStays = stays.length
+  const pendingInvoices = stays.filter(s => s.status === 'Pending Invoice').length
 
   return (
     <div className="flex h-screen w-full bg-background-light dark:bg-background-dark text-slate-900 dark:text-white font-display overflow-hidden selection:bg-primary/20">
@@ -164,6 +142,12 @@ export default function EmployeeStaysClient() {
                 <span className="text-sm font-bold">Download All Supporting Bills</span>
               </button>
             </div>
+
+            {error && (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/30 dark:bg-red-900/10 dark:text-red-300">
+                {error}
+              </div>
+            )}
 
             {/* Stats */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -245,11 +229,11 @@ export default function EmployeeStaysClient() {
                           type="checkbox"
                           className="rounded border-slate-300 text-primary focus:ring-primary dark:bg-slate-800 dark:border-slate-600"
                           onChange={handleSelectAll}
-                          checked={selectedRows.size === mockStays.length && mockStays.length > 0}
+                          checked={selectedRows.size === stays.length && stays.length > 0}
                         />
                       </th>
                       <th className="p-4 text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">Guest Name</th>
-                      <th className="p-4 text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">ID / Cost Center</th>
+                      <th className="p-4 text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">ID / Department</th>
                       <th className="p-4 text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">Property</th>
                       <th className="p-4 text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">Dates</th>
                       <th className="p-4 text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 text-center">Nights</th>
@@ -259,7 +243,11 @@ export default function EmployeeStaysClient() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
-                    {filteredStays.map((stay) => (
+                    {isLoading ? (
+                      <tr>
+                        <td colSpan={9} className="p-6 text-center text-sm text-slate-500 dark:text-slate-400">Loading employee stays...</td>
+                      </tr>
+                    ) : filteredStays.map((stay) => (
                       <tr key={stay.id} className="group hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
                         <td className="p-4">
                           <input
@@ -271,23 +259,16 @@ export default function EmployeeStaysClient() {
                         </td>
                         <td className="p-4">
                           <div className="flex items-center gap-3">
-                            {stay.avatar ? (
-                              <div
-                                className="size-8 rounded-full bg-cover bg-center"
-                                style={{ backgroundImage: `url('${stay.avatar}')` }}
-                              ></div>
-                            ) : (
-                              <div className="size-8 rounded-full bg-primary/20 text-primary flex items-center justify-center text-xs font-bold">
-                                {stay.initials}
-                              </div>
-                            )}
+                            <div className="size-8 rounded-full bg-primary/20 text-primary flex items-center justify-center text-xs font-bold">
+                              {stay.initials}
+                            </div>
                             <span className="text-sm font-semibold text-slate-900 dark:text-slate-200">{stay.guestName}</span>
                           </div>
                         </td>
                         <td className="p-4 text-sm text-slate-600 dark:text-slate-400">
                           <div className="flex flex-col">
                             <span className="font-medium text-slate-900 dark:text-slate-300">{stay.employeeId}</span>
-                            <span className="text-xs">{stay.costCenter}</span>
+                            <span className="text-xs">{stay.department ?? '—'}</span>
                           </div>
                         </td>
                         <td className="p-4 text-sm font-medium text-primary hover:underline cursor-pointer">{stay.property}</td>
@@ -317,7 +298,7 @@ export default function EmployeeStaysClient() {
                 <p className="text-sm text-slate-600 dark:text-slate-400">
                   Showing <span className="font-bold text-slate-900 dark:text-white">1</span> to{' '}
                   <span className="font-bold text-slate-900 dark:text-white">{filteredStays.length}</span> of{' '}
-                  <span className="font-bold text-slate-900 dark:text-white">{mockStays.length}</span> records
+                  <span className="font-bold text-slate-900 dark:text-white">{stays.length}</span> records
                 </p>
                 <div className="flex items-center gap-2">
                   <button className="p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50">

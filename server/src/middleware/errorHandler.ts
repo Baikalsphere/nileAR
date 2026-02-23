@@ -18,6 +18,13 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, next) => {
 
   if (config.nodeEnv !== "production") {
     console.error(err);
+    if (err instanceof Error) {
+      return res.status(500).json({
+        error: {
+          message: err.message
+        }
+      });
+    }
   }
 
   return res.status(500).json({ error: { message: "Internal server error" } });

@@ -19,6 +19,7 @@ interface Organization {
   creditPeriod: string
   paymentTerms: string
   status: OrganizationStatus
+  contractStatus?: 'draft' | 'sent' | 'signed' | null
   amountReceived: number
   pendingPayment: number
 }
@@ -30,6 +31,7 @@ interface ApiOrganization {
   creditPeriod: string | null
   paymentTerms: string | null
   status: OrganizationStatus
+  contractStatus?: 'draft' | 'sent' | 'signed' | null
 }
 
 interface GeneratedCredentials {
@@ -181,6 +183,7 @@ const toOrganization = (apiOrg: ApiOrganization): Organization => {
     creditPeriod: apiOrg.creditPeriod ?? '30 Days',
     paymentTerms: apiOrg.paymentTerms ?? 'Net 30',
     status: apiOrg.status,
+    contractStatus: apiOrg.contractStatus ?? null,
     amountReceived,
     pendingPayment
   }
@@ -460,14 +463,25 @@ export default function OrganizationsClient() {
                         </td>
                         <td className="px-6 py-4">
                           <div className="flex items-center justify-center gap-2">
-                            <Link
-                              href={`/hotel-finance/organizations/${org.id}/contract`}
-                              className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm font-medium"
-                              title="Generate Contract"
-                            >
-                              <span className="material-symbols-outlined text-[18px]">description</span>
-                              <span>Generate Contract</span>
-                            </Link>
+                            {org.contractStatus === 'signed' ? (
+                              <button
+                                disabled
+                                className="flex items-center gap-2 px-4 py-2 bg-slate-300 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-lg text-sm font-medium cursor-not-allowed"
+                                title="Contract already signed"
+                              >
+                                <span className="material-symbols-outlined text-[18px]">verified</span>
+                                <span>Contract Signed</span>
+                              </button>
+                            ) : (
+                              <Link
+                                href={`/hotel-finance/organizations/${org.id}/contract`}
+                                className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm font-medium"
+                                title="Generate Contract"
+                              >
+                                <span className="material-symbols-outlined text-[18px]">description</span>
+                                <span>Generate Contract</span>
+                              </Link>
+                            )}
                           </div>
                         </td>
                       </tr>

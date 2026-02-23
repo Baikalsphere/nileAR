@@ -19,7 +19,14 @@ const envSchema = z.object({
   SMTP_SECURE: z.enum(["true", "false"]).default("false"),
   SMTP_USER: z.string().min(1).optional(),
   SMTP_PASS: z.string().min(1).optional(),
-  SMTP_FROM: z.string().email().optional()
+  SMTP_FROM: z.string().email().optional(),
+  CLOUDINARY_CLOUD_NAME: z.string().min(1).optional(),
+  CLOUDINARY_API_KEY: z.string().min(1).optional(),
+  CLOUDINARY_API_SECRET: z.string().min(1).optional(),
+  CLOUDINARY_FOLDER: z.string().default("hotel-finance/bills"),
+  SUPABASE_URL: z.string().url().optional(),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
+  SUPABASE_STORAGE_BUCKET: z.string().min(1).default("booking-bills")
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -49,6 +56,15 @@ export const config = {
   smtpUser: env.SMTP_USER,
   smtpPass: env.SMTP_PASS,
   smtpFrom: env.SMTP_FROM,
+  cloudinaryCloudName: env.CLOUDINARY_CLOUD_NAME,
+  cloudinaryApiKey: env.CLOUDINARY_API_KEY,
+  cloudinaryApiSecret: env.CLOUDINARY_API_SECRET,
+  cloudinaryFolder: env.CLOUDINARY_FOLDER,
+  cloudinaryEnabled: Boolean(env.CLOUDINARY_CLOUD_NAME && env.CLOUDINARY_API_KEY && env.CLOUDINARY_API_SECRET),
+  supabaseUrl: env.SUPABASE_URL,
+  supabaseServiceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY,
+  supabaseStorageBucket: env.SUPABASE_STORAGE_BUCKET,
+  supabaseStorageEnabled: Boolean(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY),
   mailEnabled: Boolean(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS && env.SMTP_FROM),
   isProd: env.NODE_ENV === "production"
 };

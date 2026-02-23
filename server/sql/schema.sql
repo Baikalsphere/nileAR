@@ -54,6 +54,9 @@ ALTER TABLE organizations
   ADD COLUMN IF NOT EXISTS registered_address text,
   ADD COLUMN IF NOT EXISTS contact_email citext,
   ADD COLUMN IF NOT EXISTS contact_phone text,
+  ADD COLUMN IF NOT EXISTS contact_person text,
+  ADD COLUMN IF NOT EXISTS billing_address text,
+  ADD COLUMN IF NOT EXISTS pan_card text,
   ADD COLUMN IF NOT EXISTS password_reset_required boolean NOT NULL DEFAULT true;
 
 CREATE INDEX IF NOT EXISTS organizations_name_idx ON organizations(name);
@@ -61,6 +64,34 @@ CREATE INDEX IF NOT EXISTS organizations_status_idx ON organizations(status);
 CREATE UNIQUE INDEX IF NOT EXISTS organizations_contact_email_uniq
   ON organizations(contact_email)
   WHERE contact_email IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS organization_contracts (
+  id text PRIMARY KEY,
+  organization_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  status text NOT NULL DEFAULT 'draft',
+  contract_data jsonb NOT NULL,
+  sign_token text UNIQUE,
+  sign_token_expires_at timestamptz,
+  signed_by text,
+  signed_designation text,
+  signature_data_url text,
+  signed_at timestamptz,
+  created_by text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS organization_contracts_organization_id_idx
+  ON organization_contracts(organization_id);
+
+CREATE INDEX IF NOT EXISTS organization_contracts_created_at_idx
+  ON organization_contracts(created_at DESC);
+
+DROP TRIGGER IF EXISTS organization_contracts_set_updated_at ON organization_contracts;
+CREATE TRIGGER organization_contracts_set_updated_at
+  BEFORE UPDATE ON organization_contracts
+  FOR EACH ROW
+  EXECUTE PROCEDURE set_updated_at();
 
 CREATE OR REPLACE FUNCTION set_updated_at() RETURNS trigger AS $$
 BEGIN
@@ -78,5 +109,174 @@ CREATE TRIGGER users_set_updated_at
 DROP TRIGGER IF EXISTS organizations_set_updated_at ON organizations;
 CREATE TRIGGER organizations_set_updated_at
   BEFORE UPDATE ON organizations
+  FOR EACH ROW
+  EXECUTE PROCEDURE set_updated_at();
+
+CREATE TABLE IF NOT EXISTS corporate_employees (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  employee_code text NOT NULL,
+  full_name text NOT NULL,
+  email citext,
+  phone text,
+  department text,
+  designation text,
+  cost_center text,
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS corporate_employees_organization_id_idx
+  ON corporate_employees(organization_id);
+
+CREATE INDEX IF NOT EXISTS corporate_employees_full_name_idx
+  ON corporate_employees(full_name);
+
+CREATE UNIQUE INDEX IF NOT EXISTS corporate_employees_org_code_uniq
+  ON corporate_employees(organization_id, employee_code);
+
+CREATE UNIQUE INDEX IF NOT EXISTS corporate_employees_org_email_uniq
+  ON corporate_employees(organization_id, email)
+  WHERE email IS NOT NULL;
+
+DROP TRIGGER IF EXISTS corporate_employees_set_updated_at ON corporate_employees;
+CREATE TRIGGER corporate_employees_set_updated_at
+  BEFORE UPDATE ON corporate_employees
+  FOR EACH ROW
+  EXECUTE PROCEDURE set_updated_at();
+
+CREATE TABLE IF NOT EXISTS hotel_bookings (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  booking_number text UNIQUE NOT NULL,
+  organization_id text NOT NULL REFERENCES organizations(id) ON DELETE RESTRICT,
+  employee_id uuid NOT NULL REFERENCES corporate_employees(id) ON DELETE RESTRICT,
+  room_type text NOT NULL,
+  check_in_date date NOT NULL,
+  check_out_date date NOT NULL,
+  nights integer NOT NULL,
+  price_per_night numeric(12,2) NOT NULL,
+  total_price numeric(12,2) NOT NULL,
+  gst_applicable boolean NOT NULL DEFAULT false,
+  status text NOT NULL DEFAULT 'pending',
+  invoice_id uuid,
+  sent_at timestamptz,
+  created_by text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS hotel_bookings_org_id_idx
+  ON hotel_bookings(organization_id);
+
+CREATE INDEX IF NOT EXISTS hotel_bookings_employee_id_idx
+  ON hotel_bookings(employee_id);
+
+CREATE INDEX IF NOT EXISTS hotel_bookings_created_at_idx
+  ON hotel_bookings(created_at DESC);
+
+DROP TRIGGER IF EXISTS hotel_bookings_set_updated_at ON hotel_bookings;
+CREATE TRIGGER hotel_bookings_set_updated_at
+  BEFORE UPDATE ON hotel_bookings
+  FOR EACH ROW
+  EXECUTE PROCEDURE set_updated_at();
+
+CREATE TABLE IF NOT EXISTS booking_bills (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  booking_id uuid NOT NULL REFERENCES hotel_bookings(id) ON DELETE CASCADE,
+  bill_category text NOT NULL,
+  file_name text NOT NULL,
+  storage_path text,
+  cloud_url text,
+  cloud_public_id text,
+  storage_provider text NOT NULL DEFAULT 'local',
+  bill_amount numeric(12,2) NOT NULL DEFAULT 0,
+  mime_type text,
+  file_size integer,
+  notes text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+ALTER TABLE booking_bills
+  ADD COLUMN IF NOT EXISTS storage_path text,
+  ADD COLUMN IF NOT EXISTS cloud_url text,
+  ADD COLUMN IF NOT EXISTS cloud_public_id text,
+  ADD COLUMN IF NOT EXISTS storage_provider text NOT NULL DEFAULT 'local',
+  ADD COLUMN IF NOT EXISTS bill_amount numeric(12,2) NOT NULL DEFAULT 0;
+
+CREATE INDEX IF NOT EXISTS booking_bills_booking_id_idx
+  ON booking_bills(booking_id);
+
+DROP TRIGGER IF EXISTS booking_bills_set_updated_at ON booking_bills;
+CREATE TRIGGER booking_bills_set_updated_at
+  BEFORE UPDATE ON booking_bills
+  FOR EACH ROW
+  EXECUTE PROCEDURE set_updated_at();
+
+CREATE TABLE IF NOT EXISTS corporate_invoices (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  booking_id uuid UNIQUE NOT NULL REFERENCES hotel_bookings(id) ON DELETE RESTRICT,
+  organization_id text NOT NULL REFERENCES organizations(id) ON DELETE RESTRICT,
+  employee_id uuid NOT NULL REFERENCES corporate_employees(id) ON DELETE RESTRICT,
+  invoice_number text UNIQUE NOT NULL,
+  invoice_date date NOT NULL,
+  due_date date NOT NULL,
+  amount numeric(12,2) NOT NULL,
+  status text NOT NULL DEFAULT 'unpaid',
+  recipient_email citext,
+  cc_email citext,
+  sent_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS corporate_invoices_org_id_idx
+  ON corporate_invoices(organization_id);
+
+CREATE INDEX IF NOT EXISTS corporate_invoices_status_idx
+  ON corporate_invoices(status);
+
+DROP TRIGGER IF EXISTS corporate_invoices_set_updated_at ON corporate_invoices;
+CREATE TRIGGER corporate_invoices_set_updated_at
+  BEFORE UPDATE ON corporate_invoices
+  FOR EACH ROW
+  EXECUTE PROCEDURE set_updated_at();
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'hotel_bookings_invoice_fk'
+  ) THEN
+    ALTER TABLE hotel_bookings
+      ADD CONSTRAINT hotel_bookings_invoice_fk
+      FOREIGN KEY (invoice_id) REFERENCES corporate_invoices(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS employee_stays (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  booking_id uuid UNIQUE NOT NULL REFERENCES hotel_bookings(id) ON DELETE CASCADE,
+  employee_id uuid NOT NULL REFERENCES corporate_employees(id) ON DELETE RESTRICT,
+  property_name text NOT NULL,
+  check_in_date date NOT NULL,
+  check_out_date date NOT NULL,
+  nights integer NOT NULL,
+  total_amount numeric(12,2) NOT NULL,
+  status text NOT NULL DEFAULT 'pending_invoice',
+  invoice_id uuid REFERENCES corporate_invoices(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS employee_stays_org_id_idx
+  ON employee_stays(organization_id);
+
+DROP TRIGGER IF EXISTS employee_stays_set_updated_at ON employee_stays;
+CREATE TRIGGER employee_stays_set_updated_at
+  BEFORE UPDATE ON employee_stays
   FOR EACH ROW
   EXECUTE PROCEDURE set_updated_at();

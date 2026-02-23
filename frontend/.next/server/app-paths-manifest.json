@@ -1,7 +1,10 @@
 {
-  "/hotel-finance/login/page": "app/hotel-finance/login/page.js",
-  "/hotel-finance/organizations/page": "app/hotel-finance/organizations/page.js",
-  "/page": "app/page.js",
+  "/hotel-finance/bookings/page": "app/hotel-finance/bookings/page.js",
+  "/hotel-finance/bookings/[bookingId]/send/page": "app/hotel-finance/bookings/[bookingId]/send/page.js",
+  "/corporate-portal/invoices/page": "app/corporate-portal/invoices/page.js",
+  "/corporate-portal/page": "app/corporate-portal/page.js",
   "/corporate-portal/login/page": "app/corporate-portal/login/page.js",
-  "/hotel-finance/organizations/[organizationId]/contract/page": "app/hotel-finance/organizations/[organizationId]/contract/page.js"
+  "/corporate-portal/invoices/[invoiceId]/page": "app/corporate-portal/invoices/[invoiceId]/page.js",
+  "/corporate-portal/invoices/[invoiceId]/checkout/page": "app/corporate-portal/invoices/[invoiceId]/checkout/page.js",
+  "/corporate-portal/employees/page": "app/corporate-portal/employees/page.js"
 }

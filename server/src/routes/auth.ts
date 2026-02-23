@@ -1,5 +1,7 @@
 import { Router } from "express";
 import type { Request, Response } from "express";
+import fs from "node:fs";
+import path from "node:path";
 import bcrypt from "bcrypt";
 import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
@@ -7,6 +9,7 @@ import { z } from "zod";
 import { config } from "../config.js";
 import { query } from "../db.js";
 import { authLimiter } from "../middleware/rateLimiters.js";
+import { createBillSignedUrl } from "../services/supabaseStorage.js";
 
 const router = Router();
 
@@ -80,6 +83,21 @@ const corporateSetPasswordSchema = z.object({
   }
 });
 
+const corporateEmployeeSchema = z.object({
+  fullName: z.string().min(2).max(160),
+  employeeCode: z.string().min(2).max(40),
+  email: z.string().email().max(320).optional().nullable(),
+  phone: z.string().max(40).optional().nullable(),
+  department: z.string().max(120).optional().nullable(),
+  designation: z.string().max(120).optional().nullable(),
+  costCenter: z.string().max(80).optional().nullable(),
+  status: z.enum(["active", "inactive"]).default("active")
+});
+
+const corporateEmployeeListQuerySchema = z.object({
+  search: z.string().max(160).optional()
+});
+
 const parseTtlMs = (ttl: string) => {
   const match = ttl.match(/^(\d+)([smhd])$/);
   if (!match) {
@@ -149,12 +167,15 @@ interface CorporateAccessTokenPayload {
 
 const getCorporatePayload = (req: Request, res: Response): CorporateAccessTokenPayload | null => {
   const header = req.headers.authorization;
-  if (!header || !header.startsWith("Bearer ")) {
+  const queryToken = typeof req.query.token === "string" ? req.query.token : null;
+  const token = header && header.startsWith("Bearer ")
+    ? header.slice("Bearer ".length).trim()
+    : queryToken;
+
+  if (!token) {
     res.status(401).json({ error: { message: "Unauthorized" } });
     return null;
   }
-
-  const token = header.slice("Bearer ".length).trim();
 
   try {
     const payload = jwt.verify(token, config.jwtAccessSecret, {
@@ -531,6 +552,430 @@ router.put("/corporate/profile", async (req, res, next) => {
       return res.status(409).json({ error: { message: "Contact email is already in use" } });
     }
 
+    return next(error);
+  }
+});
+
+router.get("/corporate/employees", async (req, res, next) => {
+  try {
+    const payload = getCorporatePayload(req, res);
+    if (!payload) {
+      return;
+    }
+
+    const { search } = corporateEmployeeListQuerySchema.parse(req.query);
+    const normalizedSearch = search?.trim();
+    const searchTerm = normalizedSearch ? `%${normalizedSearch}%` : null;
+
+    const result = await query(
+      `SELECT id, employee_code, full_name, email, phone, department,
+              designation, cost_center, is_active, created_at, updated_at
+       FROM corporate_employees
+       WHERE organization_id = $1
+         AND ($2::text IS NULL
+              OR full_name ILIKE $2
+              OR employee_code ILIKE $2
+              OR COALESCE(email::text, '') ILIKE $2
+              OR COALESCE(cost_center, '') ILIKE $2)
+       ORDER BY created_at DESC`,
+      [payload.sub, searchTerm]
+    );
+
+    const employees = result.rows.map((row) => ({
+      id: row.id,
+      organizationId: payload.sub,
+      fullName: row.full_name,
+      employeeCode: row.employee_code,
+      email: row.email,
+      phone: row.phone,
+      department: row.department,
+      designation: row.designation,
+      costCenter: row.cost_center,
+      status: row.is_active ? "active" : "inactive",
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    }));
+
+    return res.status(200).json({ employees });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/corporate/employees", async (req, res, next) => {
+  try {
+    const payload = getCorporatePayload(req, res);
+    if (!payload) {
+      return;
+    }
+
+    const form = corporateEmployeeSchema.parse(req.body);
+
+    const result = await query(
+      `INSERT INTO corporate_employees (
+         organization_id,
+         employee_code,
+         full_name,
+         email,
+         phone,
+         department,
+         designation,
+         cost_center,
+         is_active
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING id, employee_code, full_name, email, phone, department,
+                 designation, cost_center, is_active, created_at, updated_at`,
+      [
+        payload.sub,
+        form.employeeCode.trim().toUpperCase(),
+        form.fullName.trim(),
+        normalizeOptional(form.email)?.toLowerCase() ?? null,
+        normalizeOptional(form.phone),
+        normalizeOptional(form.department),
+        normalizeOptional(form.designation),
+        normalizeOptional(form.costCenter),
+        form.status === "active"
+      ]
+    );
+
+    const row = result.rows[0];
+    return res.status(201).json({
+      employee: {
+        id: row.id,
+        organizationId: payload.sub,
+        fullName: row.full_name,
+        employeeCode: row.employee_code,
+        email: row.email,
+        phone: row.phone,
+        department: row.department,
+        designation: row.designation,
+        costCenter: row.cost_center,
+        status: row.is_active ? "active" : "inactive",
+        createdAt: row.created_at,
+        updatedAt: row.updated_at
+      }
+    });
+  } catch (error: any) {
+    if (error?.code === "23505") {
+      if (String(error?.constraint).includes("org_code")) {
+        return res.status(409).json({ error: { message: "Employee code already exists" } });
+      }
+      if (String(error?.constraint).includes("org_email")) {
+        return res.status(409).json({ error: { message: "Employee email already exists" } });
+      }
+      return res.status(409).json({ error: { message: "Employee already exists" } });
+    }
+    return next(error);
+  }
+});
+
+router.put("/corporate/employees/:employeeId", async (req, res, next) => {
+  try {
+    const payload = getCorporatePayload(req, res);
+    if (!payload) {
+      return;
+    }
+
+    const employeeId = req.params.employeeId;
+    const form = corporateEmployeeSchema.parse(req.body);
+
+    const result = await query(
+      `UPDATE corporate_employees
+       SET employee_code = $3,
+           full_name = $4,
+           email = $5,
+           phone = $6,
+           department = $7,
+           designation = $8,
+           cost_center = $9,
+           is_active = $10
+       WHERE id = $1 AND organization_id = $2
+       RETURNING id, employee_code, full_name, email, phone, department,
+                 designation, cost_center, is_active, created_at, updated_at`,
+      [
+        employeeId,
+        payload.sub,
+        form.employeeCode.trim().toUpperCase(),
+        form.fullName.trim(),
+        normalizeOptional(form.email)?.toLowerCase() ?? null,
+        normalizeOptional(form.phone),
+        normalizeOptional(form.department),
+        normalizeOptional(form.designation),
+        normalizeOptional(form.costCenter),
+        form.status === "active"
+      ]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: { message: "Employee not found" } });
+    }
+
+    const row = result.rows[0];
+    return res.status(200).json({
+      employee: {
+        id: row.id,
+        organizationId: payload.sub,
+        fullName: row.full_name,
+        employeeCode: row.employee_code,
+        email: row.email,
+        phone: row.phone,
+        department: row.department,
+        designation: row.designation,
+        costCenter: row.cost_center,
+        status: row.is_active ? "active" : "inactive",
+        createdAt: row.created_at,
+        updatedAt: row.updated_at
+      }
+    });
+  } catch (error: any) {
+    if (error?.code === "23505") {
+      if (String(error?.constraint).includes("org_code")) {
+        return res.status(409).json({ error: { message: "Employee code already exists" } });
+      }
+      if (String(error?.constraint).includes("org_email")) {
+        return res.status(409).json({ error: { message: "Employee email already exists" } });
+      }
+      return res.status(409).json({ error: { message: "Employee already exists" } });
+    }
+    return next(error);
+  }
+});
+
+router.get("/corporate/invoices", async (req, res, next) => {
+  try {
+    const payload = getCorporatePayload(req, res);
+    if (!payload) {
+      return;
+    }
+
+    const result = await query(
+      `SELECT i.id, i.invoice_number, i.invoice_date, i.due_date, i.amount, i.status,
+              i.sent_at, i.created_at,
+              e.full_name AS employee_name,
+              e.employee_code,
+              s.property_name
+       FROM corporate_invoices i
+       JOIN corporate_employees e ON e.id = i.employee_id
+       LEFT JOIN employee_stays s ON s.invoice_id = i.id
+       WHERE i.organization_id = $1
+       ORDER BY i.created_at DESC`,
+      [payload.sub]
+    );
+
+    const invoices = result.rows.map((row) => ({
+      id: row.id,
+      invoiceNumber: row.invoice_number,
+      invoiceDate: row.invoice_date,
+      dueDate: row.due_date,
+      amount: Number(row.amount),
+      status: row.status,
+      employeeName: row.employee_name,
+      employeeCode: row.employee_code,
+      propertyName: row.property_name,
+      sentAt: row.sent_at,
+      createdAt: row.created_at
+    }));
+
+    return res.status(200).json({ invoices });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/corporate/invoices/:invoiceId", async (req, res, next) => {
+  try {
+    const payload = getCorporatePayload(req, res);
+    if (!payload) {
+      return;
+    }
+
+    const invoiceId = req.params.invoiceId;
+    const result = await query(
+            `SELECT i.id, i.invoice_number, i.invoice_date, i.due_date, i.amount, i.status,
+              i.sent_at, i.created_at,
+              b.id AS booking_id, b.booking_number, b.room_type, b.check_in_date, b.check_out_date,
+              e.full_name AS employee_name, e.employee_code,
+              s.property_name
+       FROM corporate_invoices i
+       JOIN hotel_bookings b ON b.id = i.booking_id
+       JOIN corporate_employees e ON e.id = i.employee_id
+       LEFT JOIN employee_stays s ON s.invoice_id = i.id
+       WHERE i.organization_id = $1
+         AND (i.id::text = $2 OR i.invoice_number = $2)
+       LIMIT 1`,
+      [payload.sub, invoiceId]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: { message: "Invoice not found" } });
+    }
+
+    const row = result.rows[0];
+    const billsResult = await query(
+      `SELECT id, bill_category, file_name, storage_path, cloud_url, cloud_public_id, storage_provider,
+              bill_amount, mime_type, file_size, notes, created_at
+       FROM booking_bills
+       WHERE booking_id = $1
+       ORDER BY created_at DESC`,
+      [row.booking_id]
+    );
+
+    const bills = billsResult.rows.map((billRow) => ({
+      id: billRow.id,
+      billCategory: billRow.bill_category,
+      fileName: billRow.file_name,
+      hasFile: Boolean(billRow.cloud_url || billRow.storage_path || billRow.cloud_public_id),
+      fileUrl: billRow.cloud_url || billRow.storage_path || billRow.cloud_public_id
+        ? `/api/auth/corporate/bills/${billRow.id}/file`
+        : null,
+      billAmount: Number(billRow.bill_amount ?? 0),
+      mimeType: billRow.mime_type,
+      fileSize: billRow.file_size,
+      notes: billRow.notes,
+      createdAt: billRow.created_at
+    }));
+
+    return res.status(200).json({
+      invoice: {
+        id: row.id,
+        invoiceNumber: row.invoice_number,
+        invoiceDate: row.invoice_date,
+        dueDate: row.due_date,
+        amount: Number(row.amount),
+        status: row.status,
+        bookingNumber: row.booking_number,
+        roomType: row.room_type,
+        checkInDate: row.check_in_date,
+        checkOutDate: row.check_out_date,
+        employeeName: row.employee_name,
+        employeeCode: row.employee_code,
+        propertyName: row.property_name,
+        sentAt: row.sent_at,
+        createdAt: row.created_at,
+        bills
+      }
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/corporate/bills/:billId/file", async (req, res, next) => {
+  try {
+    const payload = getCorporatePayload(req, res);
+    if (!payload) {
+      return;
+    }
+
+    const billId = req.params.billId;
+    const result = await query(
+      `SELECT bb.id, bb.file_name, bb.mime_type, bb.storage_path, bb.cloud_url, bb.cloud_public_id, bb.storage_provider
+       FROM booking_bills bb
+       JOIN hotel_bookings hb ON hb.id = bb.booking_id
+       WHERE bb.id = $1 AND hb.organization_id = $2
+       LIMIT 1`,
+      [billId, payload.sub]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: { message: "Bill file not found" } });
+    }
+
+    const row = result.rows[0];
+
+    res.removeHeader("X-Frame-Options");
+    res.removeHeader("Content-Security-Policy");
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+
+    if (row.storage_provider === "supabase" && row.cloud_public_id) {
+      const signedUrl = await createBillSignedUrl(row.cloud_public_id as string, 60);
+      const cloudResponse = await fetch(signedUrl);
+      if (!cloudResponse.ok) {
+        return res.status(404).json({ error: { message: "Bill file not found on cloud storage" } });
+      }
+
+      const contentType = cloudResponse.headers.get("content-type") || row.mime_type || "application/octet-stream";
+      const buffer = Buffer.from(await cloudResponse.arrayBuffer());
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Content-Disposition", `inline; filename="${row.file_name as string}"`);
+      return res.send(buffer);
+    }
+
+    if (row.cloud_url) {
+      const cloudResponse = await fetch(row.cloud_url as string);
+      if (!cloudResponse.ok) {
+        return res.status(404).json({ error: { message: "Bill file not found on cloud storage" } });
+      }
+
+      const contentType = cloudResponse.headers.get("content-type") || row.mime_type || "application/octet-stream";
+      const buffer = Buffer.from(await cloudResponse.arrayBuffer());
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Content-Disposition", `inline; filename="${row.file_name as string}"`);
+      return res.send(buffer);
+    }
+
+    const storagePath = row.storage_path as string | null;
+    if (!storagePath) {
+      return res.status(404).json({ error: { message: "No file stored for this bill" } });
+    }
+
+    const normalizedPath = path.resolve(storagePath);
+    if (!fs.existsSync(normalizedPath)) {
+      return res.status(404).json({ error: { message: "Bill file not found on server" } });
+    }
+
+    if (row.mime_type) {
+      res.setHeader("Content-Type", row.mime_type as string);
+    }
+    res.setHeader("Content-Disposition", `inline; filename="${row.file_name as string}"`);
+    return res.sendFile(normalizedPath);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/corporate/employee-stays", async (req, res, next) => {
+  try {
+    const payload = getCorporatePayload(req, res);
+    if (!payload) {
+      return;
+    }
+
+    const result = await query(
+      `SELECT s.id, s.booking_id, s.property_name, s.check_in_date, s.check_out_date,
+              s.nights, s.total_amount, s.status, s.invoice_id, s.created_at,
+              e.full_name AS employee_name,
+              e.employee_code,
+              e.department,
+              i.invoice_number
+       FROM employee_stays s
+       JOIN corporate_employees e ON e.id = s.employee_id
+       LEFT JOIN corporate_invoices i ON i.id = s.invoice_id
+       WHERE s.organization_id = $1
+       ORDER BY s.created_at DESC`,
+      [payload.sub]
+    );
+
+    const stays = result.rows.map((row) => ({
+      id: row.id,
+      bookingId: row.booking_id,
+      employeeName: row.employee_name,
+      employeeCode: row.employee_code,
+      department: row.department,
+      propertyName: row.property_name,
+      checkInDate: row.check_in_date,
+      checkOutDate: row.check_out_date,
+      nights: Number(row.nights),
+      totalAmount: Number(row.total_amount),
+      status: row.status,
+      invoiceId: row.invoice_id,
+      invoiceNumber: row.invoice_number,
+      createdAt: row.created_at
+    }));
+
+    return res.status(200).json({ stays });
+  } catch (error) {
     return next(error);
   }
 });

@@ -25,7 +25,94 @@ export interface CorporateProfileResponse {
   mustSetPassword: boolean;
 }
 
-const apiBaseUrl =
+export interface CorporateEmployee {
+  id: string;
+  organizationId: string;
+  fullName: string;
+  employeeCode: string;
+  email: string | null;
+  phone: string | null;
+  department: string | null;
+  designation: string | null;
+  costCenter: string | null;
+  status: "active" | "inactive";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CorporateEmployeePayload {
+  fullName: string;
+  employeeCode: string;
+  email?: string | null;
+  phone?: string | null;
+  department?: string | null;
+  designation?: string | null;
+  costCenter?: string | null;
+  status?: "active" | "inactive";
+}
+
+export interface CorporateInvoice {
+  id: string;
+  invoiceNumber: string;
+  invoiceDate: string;
+  dueDate: string;
+  amount: number;
+  status: "overdue" | "unpaid" | "paid";
+  employeeName: string;
+  employeeCode: string;
+  propertyName: string | null;
+  sentAt: string | null;
+  createdAt: string;
+}
+
+export interface CorporateInvoiceDetail {
+  id: string;
+  invoiceNumber: string;
+  invoiceDate: string;
+  dueDate: string;
+  amount: number;
+  status: "overdue" | "unpaid" | "paid";
+  bookingNumber: string;
+  roomType: string;
+  checkInDate: string;
+  checkOutDate: string;
+  employeeName: string;
+  employeeCode: string;
+  propertyName: string | null;
+  sentAt: string | null;
+  createdAt: string;
+  bills: Array<{
+    id: string;
+    billCategory: string;
+    fileName: string;
+    hasFile: boolean;
+    fileUrl: string | null;
+    billAmount: number;
+    mimeType: string | null;
+    fileSize: number | null;
+    notes: string | null;
+    createdAt: string;
+  }>;
+}
+
+export interface CorporateEmployeeStay {
+  id: string;
+  bookingId: string;
+  employeeName: string;
+  employeeCode: string;
+  department: string | null;
+  propertyName: string;
+  checkInDate: string;
+  checkOutDate: string;
+  nights: number;
+  totalAmount: number;
+  status: "pending_invoice" | "invoiced" | "paid";
+  invoiceId: string | null;
+  invoiceNumber: string | null;
+  createdAt: string;
+}
+
+export const corporateApiBaseUrl =
   process.env.NEXT_PUBLIC_API_URL ??
   process.env.NEXT_PUBLIC_API_BASE_URL ??
   "http://localhost:4000";
@@ -79,7 +166,7 @@ const getCorporateAuthHeaders = () => {
 };
 
 export const loginCorporate = async (username: string, password: string) => {
-  const response = await fetch(`${apiBaseUrl}/api/auth/corporate/login`, {
+  const response = await fetch(`${corporateApiBaseUrl}/api/auth/corporate/login`, {
     method: "POST",
     credentials: "include",
     headers: {
@@ -99,7 +186,7 @@ export const loginCorporate = async (username: string, password: string) => {
 };
 
 export const fetchCorporateProfile = async () => {
-  const response = await fetch(`${apiBaseUrl}/api/auth/corporate/me`, {
+  const response = await fetch(`${corporateApiBaseUrl}/api/auth/corporate/me`, {
     method: "GET",
     credentials: "include",
     headers: {
@@ -122,7 +209,7 @@ export const updateCorporateProfile = async (payload: {
   contactEmail?: string;
   phone?: string;
 }) => {
-  const response = await fetch(`${apiBaseUrl}/api/auth/corporate/profile`, {
+  const response = await fetch(`${corporateApiBaseUrl}/api/auth/corporate/profile`, {
     method: "PUT",
     credentials: "include",
     headers: {
@@ -141,7 +228,7 @@ export const updateCorporateProfile = async (payload: {
 };
 
 export const setCorporatePassword = async (newPassword: string, confirmPassword: string) => {
-  const response = await fetch(`${apiBaseUrl}/api/auth/corporate/set-password`, {
+  const response = await fetch(`${corporateApiBaseUrl}/api/auth/corporate/set-password`, {
     method: "POST",
     credentials: "include",
     headers: {
@@ -161,11 +248,125 @@ export const setCorporatePassword = async (newPassword: string, confirmPassword:
 
 export const logoutCorporate = async () => {
   try {
-    await fetch(`${apiBaseUrl}/api/auth/logout`, {
+    await fetch(`${corporateApiBaseUrl}/api/auth/logout`, {
       method: "POST",
       credentials: "include"
     });
   } finally {
     corporateTokenStorage.clear();
   }
+};
+
+export const fetchCorporateEmployees = async (search?: string) => {
+  const params = new URLSearchParams();
+  if (search && search.trim().length > 0) {
+    params.set("search", search.trim());
+  }
+
+  const response = await fetch(
+    `${corporateApiBaseUrl}/api/auth/corporate/employees${params.toString() ? `?${params.toString()}` : ""}`,
+    {
+      method: "GET",
+      credentials: "include",
+      headers: {
+        ...getCorporateAuthHeaders()
+      }
+    }
+  );
+
+  if (!response.ok) {
+    const message = await parseErrorMessage(response);
+    throw new Error(message);
+  }
+
+  return (await response.json()) as { employees: CorporateEmployee[] };
+};
+
+export const createCorporateEmployee = async (payload: CorporateEmployeePayload) => {
+  const response = await fetch(`${corporateApiBaseUrl}/api/auth/corporate/employees`, {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+      ...getCorporateAuthHeaders()
+    },
+    body: JSON.stringify({ ...payload, status: payload.status ?? "active" })
+  });
+
+  if (!response.ok) {
+    const message = await parseErrorMessage(response);
+    throw new Error(message);
+  }
+
+  return (await response.json()) as { employee: CorporateEmployee };
+};
+
+export const updateCorporateEmployee = async (employeeId: string, payload: CorporateEmployeePayload) => {
+  const response = await fetch(`${corporateApiBaseUrl}/api/auth/corporate/employees/${employeeId}`, {
+    method: "PUT",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+      ...getCorporateAuthHeaders()
+    },
+    body: JSON.stringify({ ...payload, status: payload.status ?? "active" })
+  });
+
+  if (!response.ok) {
+    const message = await parseErrorMessage(response);
+    throw new Error(message);
+  }
+
+  return (await response.json()) as { employee: CorporateEmployee };
+};
+
+export const fetchCorporateInvoices = async () => {
+  const response = await fetch(`${corporateApiBaseUrl}/api/auth/corporate/invoices`, {
+    method: "GET",
+    credentials: "include",
+    headers: {
+      ...getCorporateAuthHeaders()
+    }
+  });
+
+  if (!response.ok) {
+    const message = await parseErrorMessage(response);
+    throw new Error(message);
+  }
+
+  return (await response.json()) as { invoices: CorporateInvoice[] };
+};
+
+export const fetchCorporateInvoiceDetail = async (invoiceId: string) => {
+  const response = await fetch(`${corporateApiBaseUrl}/api/auth/corporate/invoices/${invoiceId}`, {
+    method: "GET",
+    credentials: "include",
+    headers: {
+      ...getCorporateAuthHeaders()
+    }
+  });
+
+  if (!response.ok) {
+    const message = await parseErrorMessage(response);
+    throw new Error(message);
+  }
+
+  return (await response.json()) as { invoice: CorporateInvoiceDetail };
+};
+
+export const fetchCorporateEmployeeStays = async () => {
+  const response = await fetch(`${corporateApiBaseUrl}/api/auth/corporate/employee-stays`, {
+    method: "GET",
+    credentials: "include",
+    headers: {
+      ...getCorporateAuthHeaders()
+    }
+  });
+
+  if (!response.ok) {
+    const message = await parseErrorMessage(response);
+    throw new Error(message);
+  }
+
+  return (await response.json()) as { stays: CorporateEmployeeStay[] };
 };
