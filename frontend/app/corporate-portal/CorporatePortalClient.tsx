@@ -35,6 +35,7 @@ export default function CorporatePortalClient() {
   const [hotels, setHotels] = useState<CorporateHotelSummary[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'settled'>('all')
+  const [failedLogoHotelIds, setFailedLogoHotelIds] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     const token = corporateTokenStorage.get()
@@ -50,6 +51,7 @@ export default function CorporatePortalClient() {
       try {
         const response = await fetchCorporateHotels()
         setHotels(response.hotels)
+        setFailedLogoHotelIds(new Set())
         setIsAuthorized(true)
       } catch (loadError) {
         const message = loadError instanceof Error ? loadError.message : 'Failed to load hotels'
@@ -69,6 +71,18 @@ export default function CorporatePortalClient() {
 
     void loadHotels()
   }, [router])
+
+  const handleHotelLogoError = (hotelId: string) => {
+    setFailedLogoHotelIds((previous) => {
+      if (previous.has(hotelId)) {
+        return previous
+      }
+
+      const next = new Set(previous)
+      next.add(hotelId)
+      return next
+    })
+  }
 
   const filteredHotels = useMemo(() => hotels.filter((hotel) => {
     const matchesSearch = hotel.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -206,6 +220,7 @@ export default function CorporatePortalClient() {
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
               {!isLoading && filteredHotels.map((hotel) => {
                 const badge = getStatusBadge(hotel.status)
+                const shouldShowLogo = Boolean(hotel.logoUrl) && !failedLogoHotelIds.has(hotel.id)
                 return (
                   <Link
                     key={hotel.id}
@@ -215,8 +230,13 @@ export default function CorporatePortalClient() {
                     <div className="p-5 border-b border-slate-100 dark:border-slate-700">
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex items-center gap-3 min-w-0">
-                          {hotel.logoUrl ? (
-                            <img src={hotel.logoUrl} alt={hotel.name} className="size-12 rounded-lg object-cover border border-slate-200 dark:border-slate-700" />
+                          {shouldShowLogo ? (
+                            <img
+                              src={hotel.logoUrl as string}
+                              alt={hotel.name}
+                              onError={() => handleHotelLogoError(hotel.id)}
+                              className="size-12 rounded-lg object-cover border border-slate-200 dark:border-slate-700"
+                            />
                           ) : (
                             <div className="size-12 rounded-lg bg-primary/10 text-primary flex items-center justify-center font-bold">
                               {hotel.name.slice(0, 1).toUpperCase()}

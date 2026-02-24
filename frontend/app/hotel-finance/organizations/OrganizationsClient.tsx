@@ -34,6 +34,8 @@ interface ApiOrganization {
   paymentTerms: string | null
   status: OrganizationStatus
   contractStatus?: 'draft' | 'sent' | 'signed' | null
+  amountReceived?: number
+  outstandingAmount?: number
 }
 
 interface GeneratedCredentials {
@@ -182,8 +184,8 @@ const hashId = (value: string) =>
 const toOrganization = (apiOrg: ApiOrganization): Organization => {
   const hash = hashId(apiOrg.id)
   const theme = iconThemes[hash % iconThemes.length]
-  const amountReceived = 90000 + (hash % 260000)
-  const pendingPayment = (hash * 79) % 85000
+  const amountReceived = Number(apiOrg.amountReceived ?? 0)
+  const pendingPayment = Number(apiOrg.outstandingAmount ?? 0)
 
   return {
     id: apiOrg.id,

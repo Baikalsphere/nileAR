@@ -71,6 +71,7 @@ export interface BookingRecord {
   bookingNumber: string
   organizationId: string
   organizationName: string
+  organizationCreditPeriod?: string | null
   organizationEmail?: string | null
   employeeId: string
   employeeName: string
@@ -85,6 +86,8 @@ export interface BookingRecord {
   status: "pending" | "confirmed" | "checked-in" | "checked-out"
   invoiceId?: string | null
   invoiceNumber?: string | null
+  invoiceDate?: string | null
+  invoiceDueDate?: string | null
   sentAt?: string | null
 }
 
@@ -103,8 +106,50 @@ export interface BookingBill {
   createdAt: string
 }
 
+export interface DashboardSummary {
+  totalInvoicedMtd: number
+  totalCollected: number
+  totalOutstanding: number
+  overdueInvoices: number
+}
+
+export interface DashboardInvoiceVsCollectionPoint {
+  label: string
+  invoiced: number
+  collected: number
+}
+
+export interface DashboardAgingBucket {
+  label: string
+  amount: number
+  percentage: number
+}
+
+export interface DashboardAging {
+  totalDue: number
+  buckets: DashboardAgingBucket[]
+}
+
+export interface DashboardOrganizationOutstanding {
+  name: string
+  amount: number
+}
+
+export interface HotelFinanceDashboardResponse {
+  summary: DashboardSummary
+  invoiceVsCollection: DashboardInvoiceVsCollectionPoint[]
+  aging: DashboardAging
+  topOrganizationsOutstanding: DashboardOrganizationOutstanding[]
+}
+
 export const fetchBookingOrganizations = async () => {
   return request<{ organizations: BookingOrganization[] }>("/api/bookings/meta/organizations", {
+    method: "GET"
+  })
+}
+
+export const fetchHotelFinanceDashboardSummary = async () => {
+  return request<HotelFinanceDashboardResponse>("/api/bookings/dashboard/summary", {
     method: "GET"
   })
 }

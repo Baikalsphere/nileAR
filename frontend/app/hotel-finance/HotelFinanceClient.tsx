@@ -2,8 +2,126 @@
 
 import Header from '@/app/components/Header'
 import Sidebar from '@/app/components/Sidebar'
+import { tokenStorage } from '@/lib/auth'
+import { fetchHotelFinanceDashboardSummary, HotelFinanceDashboardResponse } from '@/lib/bookingsApi'
+import { useEffect, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
 
 export default function HotelFinanceClient() {
+  const router = useRouter()
+  const [dashboardData, setDashboardData] = useState<HotelFinanceDashboardResponse | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    const token = tokenStorage.get()
+    if (!token) {
+      router.replace('/hotel-finance/login')
+      return
+    }
+
+    const loadDashboard = async () => {
+      setIsLoading(true)
+      setError(null)
+      try {
+        const response = await fetchHotelFinanceDashboardSummary()
+        setDashboardData(response)
+      } catch (loadError) {
+        const message = loadError instanceof Error ? loadError.message : 'Failed to load dashboard'
+        setError(message)
+        if (message.toLowerCase().includes('unauthorized')) {
+          tokenStorage.clear()
+          router.replace('/hotel-finance/login')
+        }
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    void loadDashboard()
+  }, [router])
+
+  const formatCurrency = (amount: number) =>
+    `₹${Math.round(amount).toLocaleString('en-IN')}`
+
+  const summary = dashboardData?.summary ?? {
+    totalInvoicedMtd: 0,
+    totalCollected: 0,
+    totalOutstanding: 0,
+    overdueInvoices: 0
+  }
+
+  const invoiceVsCollection = dashboardData?.invoiceVsCollection ?? [
+    { label: 'Week 1', invoiced: 0, collected: 0 },
+    { label: 'Week 2', invoiced: 0, collected: 0 },
+    { label: 'Week 3', invoiced: 0, collected: 0 },
+    { label: 'Week 4', invoiced: 0, collected: 0 }
+  ]
+
+  const agingBuckets = dashboardData?.aging?.buckets ?? [
+    { label: '0-30 Days', amount: 0, percentage: 0 },
+    { label: '31-60 Days', amount: 0, percentage: 0 },
+    { label: '60+ Days', amount: 0, percentage: 0 }
+  ]
+
+  const topOrganizationsOutstanding = dashboardData?.topOrganizationsOutstanding ?? []
+
+  const outstandingLevel =
+    summary.totalOutstanding >= 500000
+      ? 'High'
+      : summary.totalOutstanding >= 100000
+      ? 'Medium'
+      : 'Low'
+
+  const chartConfig = useMemo(() => {
+    const maxValue = Math.max(
+      1,
+      ...invoiceVsCollection.flatMap((point) => [point.invoiced, point.collected])
+    )
+
+    const startX = 50
+    const endX = 780
+    const startY = 200
+    const chartHeight = 180
+    const step = invoiceVsCollection.length > 1 ? (endX - startX) / (invoiceVsCollection.length - 1) : 0
+
+    const toY = (value: number) => startY - (value / maxValue) * chartHeight
+    const toPath = (values: number[]) => {
+      if (values.length === 0) {
+        return ''
+      }
+      return values
+        .map((value, index) => `${index === 0 ? 'M' : 'L'} ${startX + index * step},${toY(value)}`)
+        .join(' ')
+    }
+
+    return {
+      invoicedPath: toPath(invoiceVsCollection.map((point) => point.invoiced)),
+      collectedPath: toPath(invoiceVsCollection.map((point) => point.collected))
+    }
+  }, [invoiceVsCollection])
+
+  const donutConfig = useMemo(() => {
+    const circumference = 2 * Math.PI * 40
+    let offset = 0
+
+    return agingBuckets.map((bucket) => {
+      const fraction = Math.max(0, bucket.percentage) / 100
+      const dash = fraction * circumference
+      const config = {
+        label: bucket.label,
+        amount: bucket.amount,
+        percentage: bucket.percentage,
+        strokeDasharray: `${dash} ${Math.max(0, circumference - dash)}`,
+        strokeDashoffset: -offset
+      }
+      offset += dash
+      return config
+    })
+  }, [agingBuckets])
+
+  const topOutstandingMax = Math.max(1, ...topOrganizationsOutstanding.map((item) => item.amount))
+
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background-light dark:bg-background-dark text-text-main-light dark:text-text-main-dark transition-colors duration-200">
       <Sidebar title="Hotel Finance" logoIcon="domain" />
@@ -33,6 +151,12 @@ export default function HotelFinanceClient() {
                 </button>
               </div>
             </div>
+
+            {error && (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/30 dark:bg-red-900/10 dark:text-red-300">
+                {error}
+              </div>
+            )}
             
             {/* KPI Stats Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
@@ -42,10 +166,12 @@ export default function HotelFinanceClient() {
                   <div className="p-2 bg-blue-50 dark:bg-blue-900/20 rounded-lg text-primary">
                     <span className="material-symbols-outlined">receipt</span>
                   </div>
-                  <span className="flex items-center text-xs font-bold text-success bg-success/10 px-2 py-1 rounded-full">+15%</span>
+                  <span className="flex items-center text-xs font-bold text-success bg-success/10 px-2 py-1 rounded-full">MTD</span>
                 </div>
                 <p className="text-text-sub-light dark:text-text-sub-dark text-sm font-medium">Total Invoiced (MTD)</p>
-                <h3 className="text-2xl font-bold text-text-main-light dark:text-text-main-dark mt-1">$1.2M</h3>
+                <h3 className="text-2xl font-bold text-text-main-light dark:text-text-main-dark mt-1">
+                  {isLoading ? '...' : formatCurrency(summary.totalInvoicedMtd)}
+                </h3>
               </div>
               
               {/* Total Collected */}
@@ -54,10 +180,12 @@ export default function HotelFinanceClient() {
                   <div className="p-2 bg-green-50 dark:bg-green-900/20 rounded-lg text-success">
                     <span className="material-symbols-outlined">savings</span>
                   </div>
-                  <span className="flex items-center text-xs font-bold text-success bg-success/10 px-2 py-1 rounded-full">+5%</span>
+                  <span className="flex items-center text-xs font-bold text-success bg-success/10 px-2 py-1 rounded-full">Paid</span>
                 </div>
                 <p className="text-text-sub-light dark:text-text-sub-dark text-sm font-medium">Total Collected</p>
-                <h3 className="text-2xl font-bold text-text-main-light dark:text-text-main-dark mt-1">$850K</h3>
+                <h3 className="text-2xl font-bold text-text-main-light dark:text-text-main-dark mt-1">
+                  {isLoading ? '...' : formatCurrency(summary.totalCollected)}
+                </h3>
               </div>
               
               {/* Outstanding Amount */}
@@ -66,10 +194,12 @@ export default function HotelFinanceClient() {
                   <div className="p-2 bg-amber-50 dark:bg-amber-900/20 rounded-lg text-warning">
                     <span className="material-symbols-outlined">pending_actions</span>
                   </div>
-                  <span className="flex items-center text-xs font-bold text-warning bg-warning/10 px-2 py-1 rounded-full">High</span>
+                  <span className="flex items-center text-xs font-bold text-warning bg-warning/10 px-2 py-1 rounded-full">{outstandingLevel}</span>
                 </div>
                 <p className="text-text-sub-light dark:text-text-sub-dark text-sm font-medium">Outstanding Amount</p>
-                <h3 className="text-2xl font-bold text-text-main-light dark:text-text-main-dark mt-1">$350K</h3>
+                <h3 className="text-2xl font-bold text-text-main-light dark:text-text-main-dark mt-1">
+                  {isLoading ? '...' : formatCurrency(summary.totalOutstanding)}
+                </h3>
               </div>
               
               {/* Overdue Invoices */}
@@ -78,10 +208,12 @@ export default function HotelFinanceClient() {
                   <div className="p-2 bg-red-50 dark:bg-red-900/20 rounded-lg text-danger">
                     <span className="material-symbols-outlined">warning</span>
                   </div>
-                  <span className="flex items-center text-xs font-bold text-danger bg-danger/10 px-2 py-1 rounded-full">+10%</span>
+                  <span className="flex items-center text-xs font-bold text-danger bg-danger/10 px-2 py-1 rounded-full">Live</span>
                 </div>
                 <p className="text-text-sub-light dark:text-text-sub-dark text-sm font-medium">Overdue Invoices</p>
-                <h3 className="text-2xl font-bold text-text-main-light dark:text-text-main-dark mt-1">12</h3>
+                <h3 className="text-2xl font-bold text-text-main-light dark:text-text-main-dark mt-1">
+                  {isLoading ? '...' : summary.overdueInvoices}
+                </h3>
               </div>
             </div>
             
@@ -117,7 +249,7 @@ export default function HotelFinanceClient() {
                     
                     {/* Invoiced line (blue) */}
                     <path
-                      d="M 50,180 C 100,160 150,140 200,100 C 250,60 300,40 350,30 C 400,35 450,50 500,80 C 550,120 600,170 650,150 C 700,120 750,50 780,20"
+                      d={chartConfig.invoicedPath}
                       fill="none"
                       stroke="#0651ED"
                       strokeWidth="3"
@@ -126,7 +258,7 @@ export default function HotelFinanceClient() {
                     
                     {/* Collected line (green) */}
                     <path
-                      d="M 50,200 C 100,190 150,180 200,150 C 250,120 300,100 350,95 C 400,100 450,110 500,130 C 550,160 600,190 650,180 C 700,160 750,120 780,100"
+                      d={chartConfig.collectedPath}
                       fill="none"
                       stroke="#10B981"
                       strokeWidth="3"
@@ -134,10 +266,14 @@ export default function HotelFinanceClient() {
                     />
                     
                     {/* Month labels */}
-                    <text x="50" y="245" className="text-xs fill-slate-400" textAnchor="middle">Week 1</text>
-                    <text x="200" y="245" className="text-xs fill-slate-400" textAnchor="middle">Week 2</text>
-                    <text x="500" y="245" className="text-xs fill-slate-400" textAnchor="middle">Week 3</text>
-                    <text x="750" y="245" className="text-xs fill-slate-400" textAnchor="middle">Week 4</text>
+                    {invoiceVsCollection.map((point, index) => {
+                      const x = invoiceVsCollection.length > 1 ? 50 + (730 / (invoiceVsCollection.length - 1)) * index : 50
+                      return (
+                        <text key={point.label} x={x} y="245" className="text-xs fill-slate-400" textAnchor="middle">
+                          {point.label}
+                        </text>
+                      )
+                    })}
                   </svg>
                 </div>
               </div>
@@ -159,8 +295,8 @@ export default function HotelFinanceClient() {
                         fill="none"
                         stroke="#0651ED"
                         strokeWidth="20"
-                        strokeDasharray="150.8 251.2"
-                        strokeDashoffset="0"
+                        strokeDasharray={donutConfig[0]?.strokeDasharray ?? '0 251.2'}
+                        strokeDashoffset={donutConfig[0]?.strokeDashoffset ?? 0}
                       />
                       {/* 31-60 Days - Orange (30%) */}
                       <circle
@@ -170,8 +306,8 @@ export default function HotelFinanceClient() {
                         fill="none"
                         stroke="#F59E0B"
                         strokeWidth="20"
-                        strokeDasharray="75.4 326.6"
-                        strokeDashoffset="-150.8"
+                        strokeDasharray={donutConfig[1]?.strokeDasharray ?? '0 251.2'}
+                        strokeDashoffset={donutConfig[1]?.strokeDashoffset ?? 0}
                       />
                       {/* 60+ Days - Red (10%) */}
                       <circle
@@ -181,13 +317,15 @@ export default function HotelFinanceClient() {
                         fill="none"
                         stroke="#EF4444"
                         strokeWidth="20"
-                        strokeDasharray="25.1 376.9"
-                        strokeDashoffset="-226.2"
+                        strokeDasharray={donutConfig[2]?.strokeDasharray ?? '0 251.2'}
+                        strokeDashoffset={donutConfig[2]?.strokeDashoffset ?? 0}
                       />
                     </svg>
                     <div className="absolute inset-0 flex flex-col items-center justify-center">
                       <p className="text-xs text-text-sub-light dark:text-text-sub-dark">Total Due</p>
-                      <p className="text-xl font-bold text-text-main-light dark:text-text-main-dark">$350K</p>
+                      <p className="text-xl font-bold text-text-main-light dark:text-text-main-dark">
+                        {isLoading ? '...' : formatCurrency(summary.totalOutstanding)}
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -199,21 +337,21 @@ export default function HotelFinanceClient() {
                       <div className="w-3 h-3 rounded-full bg-primary"></div>
                       <span className="text-sm text-text-main-light dark:text-text-main-dark">0-30 Days</span>
                     </div>
-                    <span className="text-sm font-bold text-text-main-light dark:text-text-main-dark">60%</span>
+                    <span className="text-sm font-bold text-text-main-light dark:text-text-main-dark">{Math.round(agingBuckets[0]?.percentage ?? 0)}%</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <div className="w-3 h-3 rounded-full bg-warning"></div>
                       <span className="text-sm text-text-main-light dark:text-text-main-dark">31-60 Days</span>
                     </div>
-                    <span className="text-sm font-bold text-text-main-light dark:text-text-main-dark">30%</span>
+                    <span className="text-sm font-bold text-text-main-light dark:text-text-main-dark">{Math.round(agingBuckets[1]?.percentage ?? 0)}%</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <div className="w-3 h-3 rounded-full bg-danger"></div>
                       <span className="text-sm text-text-main-light dark:text-text-main-dark">60+ Days</span>
                     </div>
-                    <span className="text-sm font-bold text-text-main-light dark:text-text-main-dark">10%</span>
+                    <span className="text-sm font-bold text-text-main-light dark:text-text-main-dark">{Math.round(agingBuckets[2]?.percentage ?? 0)}%</span>
                   </div>
                 </div>
               </div>
@@ -224,41 +362,24 @@ export default function HotelFinanceClient() {
               <h3 className="text-lg font-bold text-text-main-light dark:text-text-main-dark mb-6">Top Organizations Outstanding</h3>
               
               <div className="space-y-4">
-                {/* IBM Corp */}
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-text-main-light dark:text-text-main-dark">IBM Corp.</span>
-                  <span className="text-sm font-bold text-text-main-light dark:text-text-main-dark">$124,500</span>
-                </div>
-                <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-2">
-                  <div className="bg-primary h-2 rounded-full" style={{width: '100%'}}></div>
-                </div>
-                
-                {/* Deloitte Consulting */}
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-text-main-light dark:text-text-main-dark">Deloitte Consulting</span>
-                  <span className="text-sm font-bold text-text-main-light dark:text-text-main-dark">$86,200</span>
-                </div>
-                <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-2">
-                  <div className="bg-primary h-2 rounded-full" style={{width: '69%'}}></div>
-                </div>
-                
-                {/* Accenture */}
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-text-main-light dark:text-text-main-dark">Accenture</span>
-                  <span className="text-sm font-bold text-text-main-light dark:text-text-main-dark">$45,000</span>
-                </div>
-                <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-2">
-                  <div className="bg-primary h-2 rounded-full" style={{width: '36%'}}></div>
-                </div>
-                
-                {/* Local Partners */}
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-text-main-light dark:text-text-main-dark">Local Partners</span>
-                  <span className="text-sm font-bold text-text-main-light dark:text-text-main-dark">$22,100</span>
-                </div>
-                <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-2">
-                  <div className="bg-primary h-2 rounded-full" style={{width: '18%'}}></div>
-                </div>
+                {topOrganizationsOutstanding.length > 0 ? (
+                  topOrganizationsOutstanding.map((organization) => (
+                    <div key={organization.name}>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium text-text-main-light dark:text-text-main-dark">{organization.name}</span>
+                        <span className="text-sm font-bold text-text-main-light dark:text-text-main-dark">{formatCurrency(organization.amount)}</span>
+                      </div>
+                      <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-2 mt-2">
+                        <div
+                          className="bg-primary h-2 rounded-full"
+                          style={{ width: `${Math.max(6, (organization.amount / topOutstandingMax) * 100)}%` }}
+                        ></div>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-sm text-text-sub-light dark:text-text-sub-dark">No outstanding balances at the moment.</p>
+                )}
               </div>
             </div>
             
@@ -270,7 +391,7 @@ export default function HotelFinanceClient() {
                 </div>
                 <div className="flex-1">
                   <h3 className="text-xl font-bold mb-2">Send Reminders</h3>
-                  <p className="text-sm text-blue-100 mb-4">12 overdue invoices need attention.</p>
+                  <p className="text-sm text-blue-100 mb-4">{summary.overdueInvoices} overdue invoices need attention.</p>
                   <button className="px-6 py-2.5 bg-white text-primary rounded-lg text-sm font-bold hover:bg-blue-50 transition-colors">
                     Review &amp; Send
                   </button>

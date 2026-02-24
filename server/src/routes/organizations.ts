@@ -1068,7 +1068,9 @@ router.get("/", async (req, res, next) => {
               o.payment_terms,
               o.status,
               o.created_at,
-              c.status AS contract_status
+              c.status AS contract_status,
+              COALESCE(SUM(CASE WHEN i.status = 'paid' THEN i.amount ELSE 0 END), 0) AS amount_received,
+              COALESCE(SUM(CASE WHEN i.status IN ('unpaid', 'overdue') THEN i.amount ELSE 0 END), 0) AS outstanding_amount
        FROM organizations o
        LEFT JOIN LATERAL (
          SELECT status
@@ -1078,9 +1080,13 @@ router.get("/", async (req, res, next) => {
          ORDER BY created_at DESC
          LIMIT 1
        ) c ON true
-      JOIN hotel_organizations ho ON ho.organization_id = o.id
-      WHERE ho.hotel_user_id = $1
-       ORDER BY created_at DESC`
+       JOIN hotel_organizations ho ON ho.organization_id = o.id
+       LEFT JOIN hotel_bookings hb ON hb.organization_id = o.id
+                                 AND hb.created_by = ho.hotel_user_id::text
+       LEFT JOIN corporate_invoices i ON i.booking_id = hb.id
+       WHERE ho.hotel_user_id = $1
+       GROUP BY o.id, o.name, o.gst, o.credit_period, o.payment_terms, o.status, o.created_at, c.status
+       ORDER BY o.created_at DESC`
       ,
       [userId]
     );
@@ -1093,6 +1099,8 @@ router.get("/", async (req, res, next) => {
       paymentTerms: row.payment_terms as string | null,
       status: row.status as string,
       contractStatus: (row.contract_status as string | null) ?? null,
+      amountReceived: Number(row.amount_received ?? 0),
+      outstandingAmount: Number(row.outstanding_amount ?? 0),
       createdAt: row.created_at as string
     }));
 
@@ -1141,6 +1149,133 @@ router.get("/:organizationId", async (req, res, next) => {
         billingAddress: row.billing_address,
         panCard: row.pan_card,
         status: row.status
+      }
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/:organizationId/reconciliation", async (req, res, next) => {
+  try {
+    const userId = req.user?.id;
+    const organizationId = req.params.organizationId;
+
+    const accessResult = await query(
+      `SELECT 1
+       FROM hotel_organizations ho
+       WHERE ho.organization_id = $1
+         AND ho.hotel_user_id = $2
+       LIMIT 1`,
+      [organizationId, userId]
+    );
+
+    if (accessResult.rowCount === 0) {
+      return res.status(404).json({ error: { message: "Organization not found" } });
+    }
+
+    const invoicesResult = await query(
+      `SELECT i.id,
+              i.invoice_number,
+              i.invoice_date,
+              i.due_date,
+              i.amount,
+              i.status,
+              i.updated_at,
+              COALESCE(es.property_name, hb.room_type, 'Hotel stay') AS description
+       FROM corporate_invoices i
+       JOIN hotel_bookings hb ON hb.id = i.booking_id
+       LEFT JOIN employee_stays es ON es.invoice_id = i.id
+       WHERE i.organization_id = $1
+         AND hb.created_by = $2
+       ORDER BY i.invoice_date DESC, i.created_at DESC`,
+      [organizationId, userId]
+    );
+
+    const now = new Date();
+
+    const items: Array<{
+      id: string;
+      type: "invoice" | "payment";
+      date: string;
+      dueDate?: string;
+      description: string;
+      invoiceNumber?: string;
+      paymentReference?: string;
+      amount: number;
+      status: "matched" | "unmatched" | "partial";
+      icon: string;
+      matchedWith?: string;
+      daysOverdue?: number;
+    }> = [];
+
+    const discrepancies: Array<{
+      id: string;
+      invoiceId: string;
+      amount: number;
+      reason: string;
+      resolved: boolean;
+    }> = [];
+
+    for (const row of invoicesResult.rows) {
+      const invoiceNumber = String(row.invoice_number);
+      const amount = Number(row.amount ?? 0);
+      const statusRaw = String(row.status ?? "").toLowerCase();
+      const invoiceDate = row.invoice_date ? new Date(row.invoice_date) : null;
+      const dueDate = row.due_date ? new Date(row.due_date) : null;
+      const updatedAt = row.updated_at ? new Date(row.updated_at) : null;
+      const isPaid = statusRaw === "paid";
+      const isPartial = statusRaw.includes("partial");
+      const itemStatus: "matched" | "unmatched" | "partial" = isPaid ? "matched" : isPartial ? "partial" : "unmatched";
+
+      const daysOverdue =
+        dueDate && !Number.isNaN(dueDate.getTime()) && dueDate.getTime() < now.getTime() && !isPaid
+          ? Math.floor((now.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24))
+          : 0;
+
+      items.push({
+        id: `inv-${row.id}`,
+        type: "invoice",
+        date: invoiceDate && !Number.isNaN(invoiceDate.getTime()) ? invoiceDate.toISOString().slice(0, 10) : "-",
+        dueDate: dueDate && !Number.isNaN(dueDate.getTime()) ? dueDate.toISOString().slice(0, 10) : "-",
+        description: String(row.description ?? "Corporate stay invoice"),
+        invoiceNumber,
+        amount,
+        status: itemStatus,
+        icon: "receipt",
+        matchedWith: isPaid ? `PAY-${invoiceNumber}` : undefined,
+        daysOverdue
+      });
+
+      if (isPaid) {
+        items.push({
+          id: `pay-${row.id}`,
+          type: "payment",
+          date: updatedAt && !Number.isNaN(updatedAt.getTime()) ? updatedAt.toISOString().slice(0, 10) : "-",
+          description: `Payment received for ${invoiceNumber}`,
+          paymentReference: `PAY-${invoiceNumber}`,
+          amount,
+          status: "matched",
+          icon: "check_circle",
+          matchedWith: invoiceNumber
+        });
+      }
+
+      if (daysOverdue > 0 && !isPaid) {
+        discrepancies.push({
+          id: `disc-${row.id}`,
+          invoiceId: invoiceNumber,
+          amount,
+          reason: `Invoice overdue by ${daysOverdue} day${daysOverdue === 1 ? "" : "s"}`,
+          resolved: false
+        });
+      }
+    }
+
+    return res.status(200).json({
+      reconciliation: {
+        items,
+        discrepancies
       }
     });
   } catch (error) {

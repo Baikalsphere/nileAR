@@ -120,6 +120,24 @@ const getDaysBetween = (checkInDate: string, checkOutDate: string) => {
   return Math.max(1, Math.ceil((checkOut.getTime() - checkIn.getTime()) / (1000 * 60 * 60 * 24)));
 };
 
+const parseCreditPeriodDays = (creditPeriod: unknown, fallback = 15) => {
+  if (typeof creditPeriod === "number" && Number.isFinite(creditPeriod) && creditPeriod >= 0) {
+    return Math.floor(creditPeriod);
+  }
+
+  if (typeof creditPeriod === "string") {
+    const match = creditPeriod.match(/\d+/);
+    if (match) {
+      const parsed = Number(match[0]);
+      if (Number.isFinite(parsed) && parsed >= 0) {
+        return Math.floor(parsed);
+      }
+    }
+  }
+
+  return fallback;
+};
+
 const parsePositiveRate = (value: unknown): number | null => {
   if (typeof value === "number" && Number.isFinite(value) && value > 0) {
     return value;
@@ -288,6 +306,164 @@ router.get("/meta/organizations/:organizationId/room-types", async (req, res, ne
   }
 });
 
+router.get("/dashboard/summary", async (req, res, next) => {
+  try {
+    const userId = req.user?.id;
+    const result = await query(
+      `SELECT i.id,
+              i.amount,
+              i.status,
+              i.invoice_date,
+              i.due_date,
+              i.sent_at,
+              o.name AS organization_name
+       FROM corporate_invoices i
+       JOIN hotel_bookings b ON b.id = i.booking_id
+       JOIN organizations o ON o.id = b.organization_id
+       WHERE b.created_by = $1`,
+      [userId]
+    );
+
+    const invoices = result.rows.map((row) => {
+      const amount = Number(row.amount ?? 0);
+      const invoiceDate = row.invoice_date ? new Date(row.invoice_date) : null;
+      const dueDate = row.due_date ? new Date(row.due_date) : null;
+      const status = String(row.status ?? "").toLowerCase();
+      const organizationName = row.organization_name ? String(row.organization_name) : "Unknown";
+      const isOutstanding = status === "unpaid" || status === "overdue";
+      const isPaid = status === "paid";
+      const isOverdue = status === "overdue" || (status === "unpaid" && dueDate !== null && dueDate.getTime() < Date.now());
+
+      return {
+        amount,
+        status,
+        invoiceDate,
+        dueDate,
+        organizationName,
+        isOutstanding,
+        isPaid,
+        isOverdue
+      };
+    });
+
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth();
+
+    const isInCurrentMonth = (date: Date | null) => {
+      if (!date || Number.isNaN(date.getTime())) {
+        return false;
+      }
+      return date.getFullYear() === currentYear && date.getMonth() === currentMonth;
+    };
+
+    const totalInvoicedMtd = invoices
+      .filter((invoice) => isInCurrentMonth(invoice.invoiceDate))
+      .reduce((sum, invoice) => sum + invoice.amount, 0);
+
+    const totalCollected = invoices
+      .filter((invoice) => invoice.isPaid)
+      .reduce((sum, invoice) => sum + invoice.amount, 0);
+
+    const totalOutstanding = invoices
+      .filter((invoice) => invoice.isOutstanding)
+      .reduce((sum, invoice) => sum + invoice.amount, 0);
+
+    const overdueInvoices = invoices.filter((invoice) => invoice.isOverdue).length;
+
+    const weekLabels = ["Week 1", "Week 2", "Week 3", "Week 4"];
+    const invoiceVsCollection = weekLabels.map((label, index) => {
+      const startDay = index * 7 + 1;
+      const endDay = index === 3 ? 31 : startDay + 6;
+
+      const inWeek = (date: Date | null) => {
+        if (!date || Number.isNaN(date.getTime()) || !isInCurrentMonth(date)) {
+          return false;
+        }
+        const day = date.getDate();
+        return day >= startDay && day <= endDay;
+      };
+
+      const invoiced = invoices
+        .filter((invoice) => inWeek(invoice.invoiceDate))
+        .reduce((sum, invoice) => sum + invoice.amount, 0);
+
+      const collected = invoices
+        .filter((invoice) => invoice.isPaid && inWeek(invoice.invoiceDate))
+        .reduce((sum, invoice) => sum + invoice.amount, 0);
+
+      return {
+        label,
+        invoiced,
+        collected
+      };
+    });
+
+    const outstandingInvoices = invoices.filter((invoice) => invoice.isOutstanding);
+    const outstandingTotal = outstandingInvoices.reduce((sum, invoice) => sum + invoice.amount, 0);
+
+    const agingBuckets = [
+      { label: "0-30 Days", key: "zeroToThirty", amount: 0 },
+      { label: "31-60 Days", key: "thirtyOneToSixty", amount: 0 },
+      { label: "60+ Days", key: "sixtyPlus", amount: 0 }
+    ];
+
+    for (const invoice of outstandingInvoices) {
+      const dateToAgeFrom = invoice.invoiceDate;
+      if (!dateToAgeFrom || Number.isNaN(dateToAgeFrom.getTime())) {
+        agingBuckets[0].amount += invoice.amount;
+        continue;
+      }
+
+      const ageInDays = Math.max(0, Math.floor((now.getTime() - dateToAgeFrom.getTime()) / (1000 * 60 * 60 * 24)));
+      if (ageInDays <= 30) {
+        agingBuckets[0].amount += invoice.amount;
+      } else if (ageInDays <= 60) {
+        agingBuckets[1].amount += invoice.amount;
+      } else {
+        agingBuckets[2].amount += invoice.amount;
+      }
+    }
+
+    const aging = {
+      totalDue: outstandingTotal,
+      buckets: agingBuckets.map((bucket) => ({
+        label: bucket.label,
+        amount: bucket.amount,
+        percentage: outstandingTotal > 0 ? (bucket.amount / outstandingTotal) * 100 : 0
+      }))
+    };
+
+    const organizationOutstandingMap = new Map<string, number>();
+    for (const invoice of outstandingInvoices) {
+      const current = organizationOutstandingMap.get(invoice.organizationName) ?? 0;
+      organizationOutstandingMap.set(invoice.organizationName, current + invoice.amount);
+    }
+
+    const topOrganizationsOutstanding = Array.from(organizationOutstandingMap.entries())
+      .map(([name, amount]) => ({
+        name,
+        amount
+      }))
+      .sort((a, b) => b.amount - a.amount)
+      .slice(0, 4);
+
+    return res.status(200).json({
+      summary: {
+        totalInvoicedMtd,
+        totalCollected,
+        totalOutstanding,
+        overdueInvoices
+      },
+      invoiceVsCollection,
+      aging,
+      topOrganizationsOutstanding
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.get("/", async (req, res, next) => {
   try {
     const userId = req.user?.id;
@@ -302,7 +478,10 @@ router.get("/", async (req, res, next) => {
               o.name AS organization_name,
               e.full_name AS employee_name,
               e.employee_code,
-              i.invoice_number
+              o.credit_period,
+              i.invoice_number,
+              i.invoice_date,
+              i.due_date
        FROM hotel_bookings b
        JOIN organizations o ON o.id = b.organization_id
        JOIN corporate_employees e ON e.id = b.employee_id
@@ -324,6 +503,7 @@ router.get("/", async (req, res, next) => {
       employeeName: row.employee_name,
       employeeCode: row.employee_code,
       roomType: row.room_type,
+      organizationCreditPeriod: row.credit_period,
       checkInDate: row.check_in_date,
       checkOutDate: row.check_out_date,
       nights: Number(row.nights),
@@ -333,6 +513,8 @@ router.get("/", async (req, res, next) => {
       status: row.status,
       invoiceId: row.invoice_id,
       invoiceNumber: row.invoice_number,
+      invoiceDate: row.invoice_date,
+      invoiceDueDate: row.due_date,
       sentAt: row.sent_at
     }));
 
@@ -662,7 +844,7 @@ router.post("/:bookingId/send", async (req, res, next) => {
       `SELECT b.id, b.booking_number, b.organization_id, b.employee_id, b.room_type,
               b.check_in_date, b.check_out_date, b.nights, b.total_price,
               b.invoice_id, b.sent_at,
-              o.name AS organization_name, o.contact_email,
+              o.name AS organization_name, o.contact_email, o.credit_period,
               e.full_name AS employee_name, e.employee_code,
               hp.hotel_name,
               hp.location AS hotel_location,
@@ -720,7 +902,7 @@ router.post("/:bookingId/send", async (req, res, next) => {
     const ccEmail = normalizeOptional(payload.ccEmail)?.toLowerCase() ?? null;
     const invoiceDate = new Date(booking.check_out_date);
     const dueDate = new Date(invoiceDate);
-    dueDate.setDate(dueDate.getDate() + 15);
+    dueDate.setDate(dueDate.getDate() + parseCreditPeriodDays(booking.credit_period, 15));
 
     const invoiceNumber = `INV-${String(booking.booking_number).replace(/[^A-Z0-9]/gi, "").toUpperCase()}-${Date.now()}`;
 

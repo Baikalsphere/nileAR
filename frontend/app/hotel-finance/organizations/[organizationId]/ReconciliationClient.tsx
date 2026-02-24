@@ -37,7 +37,7 @@ interface OrganizationData {
   paymentTerms: string | null
   status: string
   contactPerson: string | null
-  email: string | null
+  contactEmail: string | null
 }
 
 const apiBaseUrl =
@@ -45,37 +45,13 @@ const apiBaseUrl =
   process.env.NEXT_PUBLIC_API_BASE_URL ??
   'http://localhost:4000'
 
-// Mock reconciliation data with more details
-const mockReconciliationData: Record<string, ReconciliationItem[]> = {
-  'ORG-001': [
-    { id: '1', type: 'invoice', date: '2024-02-01', dueDate: '2024-03-02', description: 'Hotel Accommodation Package A', invoiceNumber: 'INV-2024-001', amount: 15000, status: 'matched', icon: 'receipt', matchedWith: 'CHQ-5001', daysOverdue: 0 },
-    { id: '2', type: 'payment', date: '2024-02-05', description: 'Payment received from Acme Corp', paymentReference: 'CHQ-5001', amount: 15000, status: 'matched', icon: 'check_circle', matchedWith: 'INV-2024-001' },
-    { id: '3', type: 'invoice', date: '2024-02-08', dueDate: '2024-03-09', description: 'Conference Room Booking (3 days)', invoiceNumber: 'INV-2024-002', amount: 8500, status: 'unmatched', icon: 'receipt', daysOverdue: 5 },
-    { id: '4', type: 'invoice', date: '2024-02-10', dueDate: '2024-03-11', description: 'Catering Services', invoiceNumber: 'INV-2024-003', amount: 5200, status: 'matched', icon: 'receipt', matchedWith: 'TXN-2024-112', daysOverdue: 0 },
-    { id: '5', type: 'payment', date: '2024-02-12', description: 'Partial payment received', paymentReference: 'TXN-2024-112', amount: 5200, status: 'matched', icon: 'check_circle', matchedWith: 'INV-2024-003' },
-    { id: '6', type: 'invoice', date: '2024-02-15', dueDate: '2024-03-16', description: 'Room upgrades and extras', invoiceNumber: 'INV-2024-004', amount: 3500, status: 'partial', icon: 'receipt', daysOverdue: 2 },
-    { id: '7', type: 'payment', date: '2024-02-18', description: 'Payment for INV-2024-004 (partial)', paymentReference: 'TXN-2024-156', amount: 2500, status: 'partial', icon: 'check_circle', matchedWith: 'INV-2024-004' },
-  ],
-  'ORG-024': [
-    { id: '1', type: 'invoice', date: '2024-02-02', dueDate: '2024-03-18', description: 'Event Management Services', invoiceNumber: 'INV-2024-101', amount: 28000, status: 'matched', icon: 'receipt', matchedWith: 'WIRE-2024-48' },
-    { id: '2', type: 'payment', date: '2024-02-20', description: 'Payment received', paymentReference: 'WIRE-2024-48', amount: 28000, status: 'matched', icon: 'check_circle', matchedWith: 'INV-2024-101' },
-    { id: '3', type: 'invoice', date: '2024-02-25', dueDate: '2024-04-10', description: 'Additional Services', invoiceNumber: 'INV-2024-102', amount: 12000, status: 'unmatched', icon: 'receipt', daysOverdue: 12 },
-  ]
-}
-
-const mockDiscrepancies: Record<string, Discrepancy[]> = {
-  'ORG-001': [
-    { id: '1', invoiceId: 'INV-2024-003', amount: 500, reason: 'Tax calculation discrepancy', resolved: false }
-  ],
-  'ORG-024': []
-}
-
 export default function ReconciliationClient({ organizationId }: { organizationId: string }) {
   const [organization, setOrganization] = useState<OrganizationData | null>(null)
+  const [items, setItems] = useState<ReconciliationItem[]>([])
+  const [discrepancies, setDiscrepancies] = useState<Discrepancy[]>([])
   const [organizationLoading, setOrganizationLoading] = useState(true)
   const [organizationError, setOrganizationError] = useState<string | null>(null)
-  const items = mockReconciliationData[organizationId] || []
-  const discrepancies = mockDiscrepancies[organizationId] || []
+  const [reconciliationError, setReconciliationError] = useState<string | null>(null)
   
   const [filterStatus, setFilterStatus] = useState<'all' | 'matched' | 'unmatched' | 'partial'>('all')
   const [showResolveModal, setShowResolveModal] = useState(false)
@@ -85,25 +61,50 @@ export default function ReconciliationClient({ organizationId }: { organizationI
     const loadOrganization = async () => {
       setOrganizationLoading(true)
       setOrganizationError(null)
+      setReconciliationError(null)
 
       try {
         const token = tokenStorage.get()
-        const response = await fetch(`${apiBaseUrl}/api/organizations/${organizationId}`, {
-          credentials: 'include',
-          headers: token
-            ? {
-                Authorization: `Bearer ${token}`
-              }
-            : undefined
-        })
-        if (!response.ok) {
+        const [organizationResponse, reconciliationResponse] = await Promise.all([
+          fetch(`${apiBaseUrl}/api/organizations/${organizationId}`, {
+            credentials: 'include',
+            headers: token
+              ? {
+                  Authorization: `Bearer ${token}`
+                }
+              : undefined
+          }),
+          fetch(`${apiBaseUrl}/api/organizations/${organizationId}/reconciliation`, {
+            credentials: 'include',
+            headers: token
+              ? {
+                  Authorization: `Bearer ${token}`
+                }
+              : undefined
+          })
+        ])
+
+        if (!organizationResponse.ok) {
           throw new Error('Failed to fetch organization details')
         }
 
-        const data = await response.json()
-        setOrganization(data.organization as OrganizationData)
+        const organizationData = await organizationResponse.json()
+        setOrganization(organizationData.organization as OrganizationData)
+
+        if (!reconciliationResponse.ok) {
+          throw new Error('Failed to fetch reconciliation details')
+        }
+
+        const reconciliationData = await reconciliationResponse.json()
+        setItems((reconciliationData?.reconciliation?.items ?? []) as ReconciliationItem[])
+        setDiscrepancies((reconciliationData?.reconciliation?.discrepancies ?? []) as Discrepancy[])
       } catch (error) {
-        setOrganizationError(error instanceof Error ? error.message : 'Failed to fetch organization details')
+        const message = error instanceof Error ? error.message : 'Failed to fetch reconciliation details'
+        if (message.toLowerCase().includes('organization')) {
+          setOrganizationError(message)
+        } else {
+          setReconciliationError(message)
+        }
       } finally {
         setOrganizationLoading(false)
       }
@@ -216,7 +217,7 @@ export default function ReconciliationClient({ organizationId }: { organizationI
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="font-medium">Email:</span>
-                      <span>{organization.email ?? '—'}</span>
+                      <span>{organization.contactEmail ?? '—'}</span>
                     </div>
                   </div>
                 </div>
@@ -330,6 +331,12 @@ export default function ReconciliationClient({ organizationId }: { organizationI
                 </div>
               </div>
             </div>
+
+            {reconciliationError && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/30 dark:bg-amber-900/10 dark:text-amber-300">
+                {reconciliationError}
+              </div>
+            )}
 
             {/* Discrepancies Section */}
             {discrepancies.length > 0 && (

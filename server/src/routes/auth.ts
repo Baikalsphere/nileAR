@@ -273,6 +273,47 @@ const normalizeOptional = (value?: string | null) => {
   return normalized.length > 0 ? normalized : null;
 };
 
+const getSupabaseObjectPathFromUrl = (value: string) => {
+  try {
+    const parsed = new URL(value);
+    const decodedPath = decodeURIComponent(parsed.pathname);
+
+    const storagePrefixMatch = decodedPath.match(/\/storage\/v1\/object\/(?:sign|public|authenticated)\/[^/]+\/(.+)$/i);
+    if (storagePrefixMatch?.[1]) {
+      return storagePrefixMatch[1].replace(/^\/+/, "");
+    }
+
+    const bucketPathPrefix = `/${config.supabaseStorageBucket}/`;
+    const bucketPathIndex = decodedPath.indexOf(bucketPathPrefix);
+    if (bucketPathIndex >= 0) {
+      return decodedPath.slice(bucketPathIndex + bucketPathPrefix.length).replace(/^\/+/, "");
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+};
+
+const resolveStoredLogoObjectPath = (storedValue?: string | null) => {
+  const normalized = normalizeOptional(storedValue);
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.startsWith("http://") || normalized.startsWith("https://")) {
+    return getSupabaseObjectPathFromUrl(normalized);
+  }
+
+  const trimmed = normalized.replace(/^\/+/, "");
+  const bucketPrefix = `${config.supabaseStorageBucket}/`;
+  if (trimmed.startsWith(bucketPrefix)) {
+    return trimmed.slice(bucketPrefix.length).replace(/^\/+/, "");
+  }
+
+  return trimmed;
+};
+
 const resolveHotelLogoUrl = (hotelUserId: string, storedValue?: string | null) => {
   const normalized = normalizeOptional(storedValue);
   if (!normalized) {
@@ -519,11 +560,12 @@ router.get("/hotel/logo/:hotelUserId/file", async (req, res, next) => {
       return res.status(404).json({ error: { message: "Hotel logo not found" } });
     }
 
-    if (logoValue.startsWith("http://") || logoValue.startsWith("https://")) {
+    const objectPath = resolveStoredLogoObjectPath(logoValue);
+    if (!objectPath) {
       return res.redirect(302, logoValue);
     }
 
-    const signedUrl = await createBillSignedUrl(logoValue, 60);
+    const signedUrl = await createBillSignedUrl(objectPath, 60);
     const cloudResponse = await fetch(signedUrl);
     if (!cloudResponse.ok) {
       return res.status(404).json({ error: { message: "Hotel logo not found on cloud storage" } });
@@ -627,9 +669,9 @@ router.post("/hotel/profile/logo", hotelLogoUpload.single("file"), async (req, r
       [payload.sub, uploaded.objectPath]
     );
 
-    const oldLogo = normalizeOptional(currentResult.rows[0]?.logo_url ?? null);
-    if (oldLogo && !oldLogo.startsWith("http://") && !oldLogo.startsWith("https://") && oldLogo !== uploaded.objectPath) {
-      await deleteBillFromSupabase(oldLogo).catch(() => undefined);
+    const oldLogoObjectPath = resolveStoredLogoObjectPath(currentResult.rows[0]?.logo_url ?? null);
+    if (oldLogoObjectPath && oldLogoObjectPath !== uploaded.objectPath) {
+      await deleteBillFromSupabase(oldLogoObjectPath).catch(() => undefined);
     }
 
     const profileResult = await query(
