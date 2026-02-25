@@ -247,6 +247,45 @@ CREATE TRIGGER hotel_bookings_set_updated_at
   FOR EACH ROW
   EXECUTE PROCEDURE set_updated_at();
 
+CREATE TABLE IF NOT EXISTS booking_requests (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  booking_number text NOT NULL,
+  organization_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  hotel_user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  employee_id uuid NOT NULL REFERENCES corporate_employees(id) ON DELETE RESTRICT,
+  room_type text NOT NULL,
+  check_in_date date NOT NULL,
+  check_out_date date NOT NULL,
+  nights integer NOT NULL,
+  price_per_night numeric(12,2) NOT NULL,
+  total_price numeric(12,2) NOT NULL,
+  gst_applicable boolean NOT NULL DEFAULT false,
+  status text NOT NULL DEFAULT 'pending',
+  rejection_reason text,
+  requested_at timestamptz NOT NULL DEFAULT now(),
+  responded_at timestamptz,
+  responded_by text,
+  booking_id uuid REFERENCES hotel_bookings(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (hotel_user_id, booking_number)
+);
+
+CREATE INDEX IF NOT EXISTS booking_requests_hotel_user_id_idx
+  ON booking_requests(hotel_user_id);
+
+CREATE INDEX IF NOT EXISTS booking_requests_organization_id_idx
+  ON booking_requests(organization_id);
+
+CREATE INDEX IF NOT EXISTS booking_requests_status_idx
+  ON booking_requests(status);
+
+DROP TRIGGER IF EXISTS booking_requests_set_updated_at ON booking_requests;
+CREATE TRIGGER booking_requests_set_updated_at
+  BEFORE UPDATE ON booking_requests
+  FOR EACH ROW
+  EXECUTE PROCEDURE set_updated_at();
+
 CREATE TABLE IF NOT EXISTS booking_bills (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   booking_id uuid NOT NULL REFERENCES hotel_bookings(id) ON DELETE CASCADE,

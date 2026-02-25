@@ -152,3 +152,94 @@ export const sendCorporateInvoiceCoverLetterEmail = async (payload: {
     `
   });
 };
+
+export const sendBookingRequestHotelNotificationEmail = async (payload: {
+  recipientEmail: string;
+  hotelName: string;
+  organizationName: string;
+  bookingNumber: string;
+  employeeName: string;
+  roomType: string;
+  checkInDate: string;
+  checkOutDate: string;
+  totalPrice: number;
+}) => {
+  const tx = getTransporter();
+
+  await tx.sendMail({
+    from: config.smtpFrom,
+    to: payload.recipientEmail,
+    subject: `New Booking Request - ${payload.organizationName}`,
+    text: [
+      `Hello ${payload.hotelName},`,
+      "",
+      `A new booking request has been submitted by ${payload.organizationName}.`,
+      `Booking Number: ${payload.bookingNumber}`,
+      `Employee: ${payload.employeeName}`,
+      `Room Type: ${payload.roomType}`,
+      `Check-in: ${payload.checkInDate}`,
+      `Check-out: ${payload.checkOutDate}`,
+      `Estimated Amount: INR ${payload.totalPrice.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`,
+      "",
+      "Please review this request in the Bookings > Booking Requests tab.",
+      ""
+    ].join("\n"),
+    html: `
+      <p>Hello ${payload.hotelName},</p>
+      <p>A new booking request has been submitted by <strong>${payload.organizationName}</strong>.</p>
+      <p>
+        <strong>Booking Number:</strong> ${payload.bookingNumber}<br/>
+        <strong>Employee:</strong> ${payload.employeeName}<br/>
+        <strong>Room Type:</strong> ${payload.roomType}<br/>
+        <strong>Check-in:</strong> ${payload.checkInDate}<br/>
+        <strong>Check-out:</strong> ${payload.checkOutDate}<br/>
+        <strong>Estimated Amount:</strong> INR ${payload.totalPrice.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+      </p>
+      <p>Please review this request in the Bookings &gt; Booking Requests tab.</p>
+    `
+  });
+};
+
+export const sendBookingRequestAcceptedOrganizationEmail = async (payload: {
+  recipientEmail: string;
+  organizationName: string;
+  hotelName: string;
+  bookingNumber: string;
+  employeeName: string;
+  roomType: string;
+  checkInDate: string;
+  checkOutDate: string;
+}) => {
+  const tx = getTransporter();
+
+  await tx.sendMail({
+    from: config.smtpFrom,
+    to: payload.recipientEmail,
+    subject: `Booking Request Accepted - ${payload.bookingNumber}`,
+    text: [
+      `Hello ${payload.organizationName},`,
+      "",
+      `${payload.hotelName} has accepted your booking request.`,
+      `Booking Number: ${payload.bookingNumber}`,
+      `Employee: ${payload.employeeName}`,
+      `Room Type: ${payload.roomType}`,
+      `Check-in: ${payload.checkInDate}`,
+      `Check-out: ${payload.checkOutDate}`,
+      "",
+      "You can now continue with the regular booking and invoice workflow.",
+      ""
+    ].join("\n"),
+    html: `
+      <p>Hello ${payload.organizationName},</p>
+      <p><strong>${payload.hotelName}</strong> has accepted your booking request.</p>
+      <p>
+        <strong>Booking Number:</strong> ${payload.bookingNumber}<br/>
+        <strong>Employee:</strong> ${payload.employeeName}<br/>
+        <strong>Room Type:</strong> ${payload.roomType}<br/>
+        <strong>Check-in:</strong> ${payload.checkInDate}<br/>
+        <strong>Check-out:</strong> ${payload.checkOutDate}
+      </p>
+      <p>You can now continue with the regular booking and invoice workflow.</p>
+    `
+  });
+};

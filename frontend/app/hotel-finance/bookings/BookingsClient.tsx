@@ -10,11 +10,14 @@ import { tokenStorage } from '@/lib/auth'
 import {
   BookingEmployee,
   BookingOrganization,
+  BookingRequestRecord,
   BookingRecord,
   ContractRoomType,
   createBooking,
+  decideBookingRequest,
   fetchBookingEmployees,
   fetchBookingOrganizations,
+  fetchBookingRequests,
   fetchBookingRoomTypes,
   fetchBookings
 } from '@/lib/bookingsApi'
@@ -28,6 +31,10 @@ export default function BookingsClient() {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedFilter, setSelectedFilter] = useState<string>('all')
+  const [activeTab, setActiveTab] = useState<'bookings' | 'requests'>('bookings')
+  const [bookingRequests, setBookingRequests] = useState<BookingRequestRecord[]>([])
+  const [requestStatusFilter, setRequestStatusFilter] = useState<'all' | 'pending' | 'accepted' | 'rejected'>('pending')
+  const [processingRequestIds, setProcessingRequestIds] = useState<Set<string>>(new Set())
   const [searchTerm, setSearchTerm] = useState('')
   const [invoiceFilter, setInvoiceFilter] = useState<'all' | 'sent' | 'pending'>('all')
   const [fromDate, setFromDate] = useState<string>('')
@@ -69,6 +76,24 @@ export default function BookingsClient() {
     }
   }
 
+  const loadBookingRequests = async () => {
+    setIsLoading(true)
+    setError(null)
+    try {
+      const response = await fetchBookingRequests({ status: requestStatusFilter })
+      setBookingRequests(response.requests)
+    } catch (loadError) {
+      const message = loadError instanceof Error ? loadError.message : 'Failed to load booking requests'
+      setError(message)
+      if (message.toLowerCase().includes('unauthorized')) {
+        tokenStorage.clear()
+        router.replace('/hotel-finance/login')
+      }
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   useEffect(() => {
     const token = tokenStorage.get()
     if (!token) {
@@ -92,6 +117,15 @@ export default function BookingsClient() {
     void loadBookings()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedFilter, fromDate, toDate])
+
+  useEffect(() => {
+    if (activeTab !== 'requests') {
+      return
+    }
+
+    void loadBookingRequests()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, requestStatusFilter])
 
   useEffect(() => {
     if (!formData.organizationId) {
@@ -246,6 +280,50 @@ export default function BookingsClient() {
     })
   }, [bookings, invoiceFilter, searchTerm])
 
+  const filteredBookingRequests = useMemo(() => {
+    const normalizedSearch = searchTerm.trim().toLowerCase()
+    if (!normalizedSearch) {
+      return bookingRequests
+    }
+
+    return bookingRequests.filter((request) => {
+      return (
+        request.bookingNumber.toLowerCase().includes(normalizedSearch) ||
+        request.employeeName.toLowerCase().includes(normalizedSearch) ||
+        request.organizationName.toLowerCase().includes(normalizedSearch)
+      )
+    })
+  }, [bookingRequests, searchTerm])
+
+  const handleBookingRequestAction = async (requestId: string, action: 'accept' | 'reject') => {
+    setError(null)
+    setProcessingRequestIds((previous) => {
+      const next = new Set(previous)
+      next.add(requestId)
+      return next
+    })
+
+    try {
+      await decideBookingRequest(requestId, {
+        action,
+        rejectionReason: action === 'reject' ? 'Rejected by hotel' : undefined
+      })
+
+      await loadBookingRequests()
+      if (action === 'accept') {
+        await loadBookings()
+      }
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : `Failed to ${action} request`)
+    } finally {
+      setProcessingRequestIds((previous) => {
+        const next = new Set(previous)
+        next.delete(requestId)
+        return next
+      })
+    }
+  }
+
   const totalRevenue = bookings.reduce((sum, booking) => sum + booking.totalPrice, 0)
 
   return (
@@ -268,6 +346,7 @@ export default function BookingsClient() {
               <div className="flex gap-2">
                 <button
                   onClick={() => setShowAddBookingModal(true)}
+                  disabled={activeTab === 'requests'}
                   className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-blue-700 text-white rounded-lg text-sm font-semibold shadow-sm hover:shadow-md hover:shadow-primary/30 transition-all"
                 >
                   <span className="material-symbols-outlined text-[20px]">add</span>
@@ -278,6 +357,29 @@ export default function BookingsClient() {
                   <span>Export</span>
                 </button>
               </div>
+            </div>
+
+            <div className="flex gap-2 border-b border-slate-200 dark:border-slate-700">
+              <button
+                onClick={() => setActiveTab('bookings')}
+                className={`px-4 py-3 border-b-2 text-sm font-semibold transition-colors ${
+                  activeTab === 'bookings'
+                    ? 'border-primary text-primary'
+                    : 'border-transparent text-slate-600 dark:text-slate-400 hover:text-text-main-light dark:hover:text-text-main-dark'
+                }`}
+              >
+                Bookings ({bookings.length})
+              </button>
+              <button
+                onClick={() => setActiveTab('requests')}
+                className={`px-4 py-3 border-b-2 text-sm font-semibold transition-colors ${
+                  activeTab === 'requests'
+                    ? 'border-primary text-primary'
+                    : 'border-transparent text-slate-600 dark:text-slate-400 hover:text-text-main-light dark:hover:text-text-main-dark'
+                }`}
+              >
+                Booking Requests ({bookingRequests.length})
+              </button>
             </div>
 
             {error && (
@@ -400,127 +502,241 @@ export default function BookingsClient() {
               </div>
 
               {/* Status Filter Tabs */}
-              <div className="flex flex-wrap gap-2 border-b border-slate-200 dark:border-slate-700">
-                {['all', 'pending', 'confirmed', 'checked-in', 'checked-out'].map((filter) => (
-                  <button
-                    key={filter}
-                    onClick={() => setSelectedFilter(filter)}
-                    className={`px-4 py-3 border-b-2 font-semibold text-sm transition-colors ${
-                      selectedFilter === filter
-                        ? 'border-primary text-primary'
-                        : 'border-transparent text-slate-600 dark:text-slate-400 hover:text-text-main-light dark:hover:text-text-main-dark'
-                    }`}
-                  >
-                    {filter.charAt(0).toUpperCase() + filter.slice(1).replace('-', ' ')}
-                    <span className="ml-2 text-xs font-normal opacity-75">
-                      ({bookings.filter(b => filter === 'all' ? true : b.status === filter).length})
-                    </span>
-                  </button>
-                ))}
-              </div>
+              {activeTab === 'bookings' ? (
+                <div className="flex flex-wrap gap-2 border-b border-slate-200 dark:border-slate-700">
+                  {['all', 'pending', 'confirmed', 'checked-in', 'checked-out'].map((filter) => (
+                    <button
+                      key={filter}
+                      onClick={() => setSelectedFilter(filter)}
+                      className={`px-4 py-3 border-b-2 font-semibold text-sm transition-colors ${
+                        selectedFilter === filter
+                          ? 'border-primary text-primary'
+                          : 'border-transparent text-slate-600 dark:text-slate-400 hover:text-text-main-light dark:hover:text-text-main-dark'
+                      }`}
+                    >
+                      {filter.charAt(0).toUpperCase() + filter.slice(1).replace('-', ' ')}
+                      <span className="ml-2 text-xs font-normal opacity-75">
+                        ({bookings.filter(b => filter === 'all' ? true : b.status === filter).length})
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2 border-b border-slate-200 dark:border-slate-700">
+                  {(['all', 'pending', 'accepted', 'rejected'] as const).map((filter) => (
+                    <button
+                      key={filter}
+                      onClick={() => setRequestStatusFilter(filter)}
+                      className={`px-4 py-3 border-b-2 font-semibold text-sm transition-colors ${
+                        requestStatusFilter === filter
+                          ? 'border-primary text-primary'
+                          : 'border-transparent text-slate-600 dark:text-slate-400 hover:text-text-main-light dark:hover:text-text-main-dark'
+                      }`}
+                    >
+                      {filter.charAt(0).toUpperCase()}
+                      {filter.slice(1)}
+                      <span className="ml-2 text-xs font-normal opacity-75">
+                        ({bookingRequests.filter((request) => filter === 'all' ? true : request.status === filter).length})
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Bookings Table */}
             <div className="bg-surface-light dark:bg-surface-dark rounded-xl shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)] border border-slate-100 dark:border-slate-800 overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
-                      <th className="px-4 py-3 text-left">
-                        <input
-                          type="checkbox"
-                          checked={selectedBookings.size === filteredBookings.length && filteredBookings.length > 0}
-                          onChange={() => toggleSelectAll(filteredBookings)}
-                          className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 text-primary focus:ring-primary cursor-pointer"
-                        />
-                      </th>
-                      <th className="px-4 py-3 text-left text-sm font-semibold text-text-main-light dark:text-text-main-dark">Booking #</th>
-                      <th className="px-4 py-3 text-left text-sm font-semibold text-text-main-light dark:text-text-main-dark">Customer</th>
-                      <th className="px-4 py-3 text-left text-sm font-semibold text-text-main-light dark:text-text-main-dark">Corporation</th>
-                      <th className="px-4 py-3 text-left text-sm font-semibold text-text-main-light dark:text-text-main-dark">Check-in</th>
-                      <th className="px-4 py-3 text-left text-sm font-semibold text-text-main-light dark:text-text-main-dark">Invoice Sent Date</th>
-                      <th className="px-4 py-3 text-left text-sm font-semibold text-text-main-light dark:text-text-main-dark">Due Date</th>
-                      <th className="px-4 py-3 text-left text-sm font-semibold text-text-main-light dark:text-text-main-dark">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {isLoading ? (
-                      <tr>
-                        <td colSpan={8} className="px-4 py-8 text-center text-text-sub-light dark:text-text-sub-dark">
-                          Loading bookings...
-                        </td>
-                      </tr>
-                    ) : filteredBookings.length > 0 ? (
-                      filteredBookings.map((booking) => (
-                        <tr key={booking.id} className={`border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors ${selectedBookings.has(booking.id) ? 'bg-blue-50 dark:bg-blue-900/20' : ''}`}>
-                          <td className="px-4 py-3">
+                  {activeTab === 'bookings' ? (
+                    <>
+                      <thead>
+                        <tr className="border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
+                          <th className="px-4 py-3 text-left">
                             <input
                               type="checkbox"
-                              checked={selectedBookings.has(booking.id)}
-                              onChange={() => toggleBookingSelection(booking.id)}
+                              checked={selectedBookings.size === filteredBookings.length && filteredBookings.length > 0}
+                              onChange={() => toggleSelectAll(filteredBookings)}
                               className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 text-primary focus:ring-primary cursor-pointer"
                             />
-                          </td>
-                          <td className="px-4 py-3 text-sm font-semibold text-text-main-light dark:text-text-main-dark whitespace-nowrap">
-                            {booking.bookingNumber}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-text-main-light dark:text-text-main-dark whitespace-nowrap">
-                            {booking.employeeName}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-text-sub-light dark:text-text-sub-dark whitespace-nowrap">
-                            {booking.organizationName}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-text-main-light dark:text-text-main-dark whitespace-nowrap">
-                            {formatDate(booking.checkInDate)}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-text-main-light dark:text-text-main-dark whitespace-nowrap">
-                            {booking.invoiceId ? formatDate(booking.sentAt) : '--'}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-text-main-light dark:text-text-main-dark whitespace-nowrap">
-                            {getDueDateDisplay(booking)}
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="flex gap-2 flex-wrap">
-                              {booking.invoiceId ? (
-                                <>
-                                  <div className="flex items-center gap-2 px-3 py-2 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 rounded-lg text-sm font-semibold">
-                                    <span className="material-symbols-outlined text-[18px]">check_circle</span>
-                                    <span>Invoice Sent</span>
-                                  </div>
-                                </>
-                              ) : (
-                                <>
-                                  <Link
-                                    href={`/hotel-finance/bookings/${booking.id}/bills`}
-                                    className="flex items-center gap-2 px-3 py-2 bg-blue-100 dark:bg-blue-900/30 hover:bg-blue-200 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-400 rounded-lg text-sm font-semibold transition-all duration-200"
-                                  >
-                                    <span className="material-symbols-outlined text-[18px]">attach_file</span>
-                                    <span className="hidden sm:inline">Attach</span>
-                                  </Link>
-                                  <Link 
-                                    href={`/hotel-finance/bookings/${booking.id}/send`}
-                                    className="flex items-center gap-2 px-3 py-2 bg-primary hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition-all duration-200 shadow-sm hover:shadow-md hover:shadow-primary/30"
-                                  >
-                                    <span className="material-symbols-outlined text-[18px]">send</span>
-                                    <span className="hidden sm:inline">Send</span>
-                                  </Link>
-                                </>
-                              )}
-                            </div>
-                          </td>
+                          </th>
+                          <th className="px-4 py-3 text-left text-sm font-semibold text-text-main-light dark:text-text-main-dark">Booking #</th>
+                          <th className="px-4 py-3 text-left text-sm font-semibold text-text-main-light dark:text-text-main-dark">Customer</th>
+                          <th className="px-4 py-3 text-left text-sm font-semibold text-text-main-light dark:text-text-main-dark">Corporation</th>
+                          <th className="px-4 py-3 text-left text-sm font-semibold text-text-main-light dark:text-text-main-dark">Check-in</th>
+                          <th className="px-4 py-3 text-left text-sm font-semibold text-text-main-light dark:text-text-main-dark">Invoice Sent Date</th>
+                          <th className="px-4 py-3 text-left text-sm font-semibold text-text-main-light dark:text-text-main-dark">Due Date</th>
+                          <th className="px-4 py-3 text-left text-sm font-semibold text-text-main-light dark:text-text-main-dark">Action</th>
                         </tr>
-                      ))
-                    ) : (
-                      <tr>
-                        <td colSpan={8} className="px-4 py-8 text-center text-text-sub-light dark:text-text-sub-dark">
-                          <div className="flex flex-col items-center gap-2">
-                            <span className="material-symbols-outlined text-[48px] opacity-40">inbox</span>
-                            <p className="text-sm font-medium">No bookings found</p>
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
+                      </thead>
+                      <tbody>
+                        {isLoading ? (
+                          <tr>
+                            <td colSpan={8} className="px-4 py-8 text-center text-text-sub-light dark:text-text-sub-dark">
+                              Loading bookings...
+                            </td>
+                          </tr>
+                        ) : filteredBookings.length > 0 ? (
+                          filteredBookings.map((booking) => (
+                            <tr key={booking.id} className={`border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors ${selectedBookings.has(booking.id) ? 'bg-blue-50 dark:bg-blue-900/20' : ''}`}>
+                              <td className="px-4 py-3">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedBookings.has(booking.id)}
+                                  onChange={() => toggleBookingSelection(booking.id)}
+                                  className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 text-primary focus:ring-primary cursor-pointer"
+                                />
+                              </td>
+                              <td className="px-4 py-3 text-sm font-semibold text-text-main-light dark:text-text-main-dark whitespace-nowrap">
+                                {booking.bookingNumber}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-text-main-light dark:text-text-main-dark whitespace-nowrap">
+                                {booking.employeeName}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-text-sub-light dark:text-text-sub-dark whitespace-nowrap">
+                                {booking.organizationName}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-text-main-light dark:text-text-main-dark whitespace-nowrap">
+                                {formatDate(booking.checkInDate)}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-text-main-light dark:text-text-main-dark whitespace-nowrap">
+                                {booking.invoiceId ? formatDate(booking.sentAt) : '--'}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-text-main-light dark:text-text-main-dark whitespace-nowrap">
+                                {getDueDateDisplay(booking)}
+                              </td>
+                              <td className="px-4 py-3">
+                                <div className="flex gap-2 flex-wrap">
+                                  {booking.invoiceId ? (
+                                    <div className="flex items-center gap-2 px-3 py-2 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 rounded-lg text-sm font-semibold">
+                                      <span className="material-symbols-outlined text-[18px]">check_circle</span>
+                                      <span>Invoice Sent</span>
+                                    </div>
+                                  ) : (
+                                    <>
+                                      <Link
+                                        href={`/hotel-finance/bookings/${booking.id}/bills`}
+                                        className="flex items-center gap-2 px-3 py-2 bg-blue-100 dark:bg-blue-900/30 hover:bg-blue-200 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-400 rounded-lg text-sm font-semibold transition-all duration-200"
+                                      >
+                                        <span className="material-symbols-outlined text-[18px]">attach_file</span>
+                                        <span className="hidden sm:inline">Attach</span>
+                                      </Link>
+                                      <Link 
+                                        href={`/hotel-finance/bookings/${booking.id}/send`}
+                                        className="flex items-center gap-2 px-3 py-2 bg-primary hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition-all duration-200 shadow-sm hover:shadow-md hover:shadow-primary/30"
+                                      >
+                                        <span className="material-symbols-outlined text-[18px]">send</span>
+                                        <span className="hidden sm:inline">Send</span>
+                                      </Link>
+                                    </>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td colSpan={8} className="px-4 py-8 text-center text-text-sub-light dark:text-text-sub-dark">
+                              <div className="flex flex-col items-center gap-2">
+                                <span className="material-symbols-outlined text-[48px] opacity-40">inbox</span>
+                                <p className="text-sm font-medium">No bookings found</p>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </>
+                  ) : (
+                    <>
+                      <thead>
+                        <tr className="border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
+                          <th className="px-4 py-3 text-left text-sm font-semibold text-text-main-light dark:text-text-main-dark">Request #</th>
+                          <th className="px-4 py-3 text-left text-sm font-semibold text-text-main-light dark:text-text-main-dark">Employee</th>
+                          <th className="px-4 py-3 text-left text-sm font-semibold text-text-main-light dark:text-text-main-dark">Organization</th>
+                          <th className="px-4 py-3 text-left text-sm font-semibold text-text-main-light dark:text-text-main-dark">Check-in</th>
+                          <th className="px-4 py-3 text-left text-sm font-semibold text-text-main-light dark:text-text-main-dark">Amount</th>
+                          <th className="px-4 py-3 text-left text-sm font-semibold text-text-main-light dark:text-text-main-dark">Status</th>
+                          <th className="px-4 py-3 text-left text-sm font-semibold text-text-main-light dark:text-text-main-dark">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {isLoading ? (
+                          <tr>
+                            <td colSpan={7} className="px-4 py-8 text-center text-text-sub-light dark:text-text-sub-dark">
+                              Loading booking requests...
+                            </td>
+                          </tr>
+                        ) : filteredBookingRequests.length > 0 ? (
+                          filteredBookingRequests.map((request) => {
+                            const isProcessing = processingRequestIds.has(request.id)
+                            return (
+                              <tr key={request.id} className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
+                                <td className="px-4 py-3 text-sm font-semibold text-text-main-light dark:text-text-main-dark whitespace-nowrap">
+                                  {request.bookingNumber}
+                                </td>
+                                <td className="px-4 py-3 text-sm text-text-main-light dark:text-text-main-dark whitespace-nowrap">
+                                  {request.employeeName}
+                                </td>
+                                <td className="px-4 py-3 text-sm text-text-sub-light dark:text-text-sub-dark whitespace-nowrap">
+                                  {request.organizationName}
+                                </td>
+                                <td className="px-4 py-3 text-sm text-text-main-light dark:text-text-main-dark whitespace-nowrap">
+                                  {formatDate(request.checkInDate)}
+                                </td>
+                                <td className="px-4 py-3 text-sm text-text-main-light dark:text-text-main-dark whitespace-nowrap">
+                                  ₹{request.totalPrice.toLocaleString()}
+                                </td>
+                                <td className="px-4 py-3 text-sm whitespace-nowrap">
+                                  <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ${
+                                    request.status === 'accepted'
+                                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+                                      : request.status === 'rejected'
+                                        ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                                        : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                                  }`}>
+                                    {request.status}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3">
+                                  {request.status === 'pending' ? (
+                                    <div className="flex gap-2">
+                                      <button
+                                        onClick={() => void handleBookingRequestAction(request.id, 'accept')}
+                                        disabled={isProcessing}
+                                        className="flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                                      >
+                                        <span className="material-symbols-outlined text-[16px]">check</span>
+                                        Accept
+                                      </button>
+                                      <button
+                                        onClick={() => void handleBookingRequestAction(request.id, 'reject')}
+                                        disabled={isProcessing}
+                                        className="flex items-center gap-1 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-60"
+                                      >
+                                        <span className="material-symbols-outlined text-[16px]">close</span>
+                                        Reject
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <span className="text-xs text-text-sub-light dark:text-text-sub-dark">No action</span>
+                                  )}
+                                </td>
+                              </tr>
+                            )
+                          })
+                        ) : (
+                          <tr>
+                            <td colSpan={7} className="px-4 py-8 text-center text-text-sub-light dark:text-text-sub-dark">
+                              <div className="flex flex-col items-center gap-2">
+                                <span className="material-symbols-outlined text-[48px] opacity-40">inbox</span>
+                                <p className="text-sm font-medium">No booking requests found</p>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </>
+                  )}
                 </table>
               </div>
             </div>

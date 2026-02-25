@@ -91,6 +91,29 @@ export interface BookingRecord {
   sentAt?: string | null
 }
 
+export interface BookingRequestRecord {
+  id: string
+  bookingNumber: string
+  organizationId: string
+  organizationName: string
+  organizationEmail?: string | null
+  employeeId: string
+  employeeName: string
+  employeeCode: string
+  roomType: string
+  checkInDate: string
+  checkOutDate: string
+  nights: number
+  pricePerNight: number
+  totalPrice: number
+  gstApplicable: boolean
+  status: 'pending' | 'accepted' | 'rejected'
+  rejectionReason?: string | null
+  requestedAt: string
+  respondedAt?: string | null
+  bookingId?: string | null
+}
+
 export interface BookingBill {
   id: string
   bookingId: string
@@ -184,6 +207,33 @@ export const fetchBookings = async (params?: { status?: string; fromDate?: strin
   return request<{ bookings: BookingRecord[] }>(`/api/bookings${searchParams.toString() ? `?${searchParams.toString()}` : ""}`, {
     method: "GET"
   })
+}
+
+export const fetchBookingRequests = async (params?: { status?: string }) => {
+  const searchParams = new URLSearchParams()
+  if (params?.status && params.status !== 'all') {
+    searchParams.set('status', params.status)
+  }
+
+  return request<{ requests: BookingRequestRecord[] }>(
+    `/api/bookings/requests${searchParams.toString() ? `?${searchParams.toString()}` : ''}`,
+    {
+      method: 'GET'
+    }
+  )
+}
+
+export const decideBookingRequest = async (
+  requestId: string,
+  payload: { action: 'accept' | 'reject'; rejectionReason?: string }
+) => {
+  return request<{ ok: boolean; status: 'accepted' | 'rejected'; booking?: BookingRecord }>(
+    `/api/bookings/requests/${requestId}/decision`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }
+  )
 }
 
 export const createBooking = async (payload: {

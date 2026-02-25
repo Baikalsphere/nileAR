@@ -133,6 +133,46 @@ export interface CorporateEmployeeStay {
   createdAt: string;
 }
 
+export interface CorporateBookingRequestEmployee {
+  id: string;
+  employeeCode: string;
+  fullName: string;
+  email: string | null;
+  department: string | null;
+  designation: string | null;
+}
+
+export interface CorporateBookingRequestRoomType {
+  roomType: string;
+  nightlyRate: number;
+  inclusions: string | null;
+}
+
+export interface CorporateBookingRequestMeta {
+  hotel: {
+    id: string;
+    name: string;
+    email: string | null;
+  };
+  contractId: string;
+  employees: CorporateBookingRequestEmployee[];
+  roomTypes: CorporateBookingRequestRoomType[];
+}
+
+export interface CorporateBookingRequestRecord {
+  id: string;
+  bookingNumber: string;
+  roomType: string;
+  checkInDate: string;
+  checkOutDate: string;
+  nights: number;
+  pricePerNight: number;
+  totalPrice: number;
+  gstApplicable: boolean;
+  status: "pending" | "accepted" | "rejected";
+  requestedAt: string;
+}
+
 export const corporateApiBaseUrl =
   process.env.NEXT_PUBLIC_API_URL ??
   process.env.NEXT_PUBLIC_API_BASE_URL ??
@@ -441,4 +481,48 @@ export const fetchCorporateEmployeeStays = async () => {
   }
 
   return (await response.json()) as { stays: CorporateEmployeeStay[] };
+};
+
+export const fetchCorporateBookingRequestMeta = async (hotelId: string) => {
+  const response = await fetch(`${corporateApiBaseUrl}/api/auth/corporate/hotels/${hotelId}/booking-request-meta`, {
+    method: "GET",
+    credentials: "include",
+    headers: {
+      ...getCorporateAuthHeaders()
+    }
+  });
+
+  if (!response.ok) {
+    const message = await parseErrorMessage(response);
+    throw new Error(message);
+  }
+
+  return (await response.json()) as CorporateBookingRequestMeta;
+};
+
+export const createCorporateBookingRequest = async (payload: {
+  hotelId: string;
+  bookingNumber: string;
+  employeeId: string;
+  roomType: string;
+  checkInDate: string;
+  checkOutDate: string;
+  gstApplicable: boolean;
+}) => {
+  const response = await fetch(`${corporateApiBaseUrl}/api/auth/corporate/booking-requests`, {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+      ...getCorporateAuthHeaders()
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    const message = await parseErrorMessage(response);
+    throw new Error(message);
+  }
+
+  return (await response.json()) as { request: CorporateBookingRequestRecord };
 };

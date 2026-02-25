@@ -16,10 +16,12 @@ import {
   isSupabaseStorageConfigured,
   uploadHotelLogoToSupabase
 } from "../services/supabaseStorage.js";
+import { sendBookingRequestHotelNotificationEmail } from "../services/mailer.js";
 
 const router = Router();
 
 const DUMMY_PASSWORD_HASH = "$2b$10$N9qo8uLOickgx2ZMRZo5i.ejFrP8T6F8mT7V0pX0rW2fMQ0m6qK2y";
+let ensureBookingRequestsTablePromise: Promise<void> | null = null;
 
 const registerSchema = z.object({
   email: z.string().email().max(320),
@@ -112,6 +114,16 @@ const corporateEmployeeSchema = z.object({
 
 const corporateEmployeeListQuerySchema = z.object({
   search: z.string().max(160).optional()
+});
+
+const corporateBookingRequestSchema = z.object({
+  hotelId: z.string().uuid(),
+  bookingNumber: z.string().min(2).max(60),
+  employeeId: z.string().uuid(),
+  roomType: z.string().min(2).max(120),
+  checkInDate: z.string().min(8).max(20),
+  checkOutDate: z.string().min(8).max(20),
+  gstApplicable: z.boolean().default(false)
 });
 
 const hotelLogoUpload = multer({
@@ -271,6 +283,131 @@ const normalizeOptional = (value?: string | null) => {
 
   const normalized = value.trim();
   return normalized.length > 0 ? normalized : null;
+};
+
+const ensureBookingRequestsTable = async () => {
+  if (!ensureBookingRequestsTablePromise) {
+    ensureBookingRequestsTablePromise = (async () => {
+      await query(
+        `CREATE TABLE IF NOT EXISTS booking_requests (
+           id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+           booking_number text NOT NULL,
+           organization_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+           hotel_user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+           employee_id uuid NOT NULL REFERENCES corporate_employees(id) ON DELETE RESTRICT,
+           room_type text NOT NULL,
+           check_in_date date NOT NULL,
+           check_out_date date NOT NULL,
+           nights integer NOT NULL,
+           price_per_night numeric(12,2) NOT NULL,
+           total_price numeric(12,2) NOT NULL,
+           gst_applicable boolean NOT NULL DEFAULT false,
+           status text NOT NULL DEFAULT 'pending',
+           rejection_reason text,
+           requested_at timestamptz NOT NULL DEFAULT now(),
+           responded_at timestamptz,
+           responded_by text,
+           booking_id uuid REFERENCES hotel_bookings(id) ON DELETE SET NULL,
+           created_at timestamptz NOT NULL DEFAULT now(),
+           updated_at timestamptz NOT NULL DEFAULT now(),
+           UNIQUE (hotel_user_id, booking_number)
+         )`
+      );
+
+      await query(
+        `CREATE INDEX IF NOT EXISTS booking_requests_hotel_user_id_idx
+         ON booking_requests(hotel_user_id)`
+      );
+
+      await query(
+        `CREATE INDEX IF NOT EXISTS booking_requests_organization_id_idx
+         ON booking_requests(organization_id)`
+      );
+
+      await query(
+        `CREATE INDEX IF NOT EXISTS booking_requests_status_idx
+         ON booking_requests(status)`
+      );
+
+      await query(
+        `DROP TRIGGER IF EXISTS booking_requests_set_updated_at ON booking_requests`
+      );
+
+      await query(
+        `CREATE TRIGGER booking_requests_set_updated_at
+         BEFORE UPDATE ON booking_requests
+         FOR EACH ROW
+         EXECUTE PROCEDURE set_updated_at()`
+      );
+    })().catch((error) => {
+      ensureBookingRequestsTablePromise = null;
+      throw error;
+    });
+  }
+
+  await ensureBookingRequestsTablePromise;
+};
+
+const getDaysBetween = (checkInDate: string, checkOutDate: string) => {
+  const checkIn = new Date(checkInDate);
+  const checkOut = new Date(checkOutDate);
+  return Math.max(1, Math.ceil((checkOut.getTime() - checkIn.getTime()) / (1000 * 60 * 60 * 24)));
+};
+
+const parsePositiveRate = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+
+  return null;
+};
+
+const resolveNightlyRate = (roomRate: any): number | null => {
+  const candidates = [
+    roomRate?.singleOccupancy?.cp,
+    roomRate?.singleOccupancy?.ep,
+    roomRate?.singleOccupancy?.map,
+    roomRate?.singleOccupancy?.ap,
+    roomRate?.doubleOccupancy?.cp,
+    roomRate?.doubleOccupancy?.ep,
+    roomRate?.doubleOccupancy?.map,
+    roomRate?.doubleOccupancy?.ap
+  ];
+
+  for (const candidate of candidates) {
+    const rate = parsePositiveRate(candidate);
+    if (rate !== null) {
+      return rate;
+    }
+  }
+
+  return null;
+};
+
+const getLatestSignedContractForCorporateHotel = async (organizationId: string, hotelUserId: string) => {
+  const contractResult = await query(
+    `SELECT id, contract_data
+     FROM organization_contracts
+     WHERE organization_id = $1
+       AND hotel_user_id = $2
+       AND status = 'signed'
+     ORDER BY signed_at DESC NULLS LAST, created_at DESC
+     LIMIT 1`,
+    [organizationId, hotelUserId]
+  );
+
+  if (contractResult.rowCount === 0) {
+    return null;
+  }
+
+  return contractResult.rows[0];
 };
 
 const getSupabaseObjectPathFromUrl = (value: string) => {
@@ -1142,6 +1279,243 @@ router.put("/corporate/employees/:employeeId", async (req, res, next) => {
         return res.status(409).json({ error: { message: "Employee email already exists" } });
       }
       return res.status(409).json({ error: { message: "Employee already exists" } });
+    }
+    return next(error);
+  }
+});
+
+router.get("/corporate/hotels/:hotelId/booking-request-meta", async (req, res, next) => {
+  try {
+    const payload = getCorporatePayload(req, res);
+    if (!payload) {
+      return;
+    }
+
+    const hotelId = req.params.hotelId;
+    await ensureBookingRequestsTable();
+
+    const relationshipResult = await query(
+      `SELECT ho.hotel_user_id,
+              COALESCE(hp.hotel_name, u.full_name, u.email, 'Hotel') AS hotel_name,
+              COALESCE(hp.contact_email, u.email) AS hotel_email
+       FROM hotel_organizations ho
+       JOIN users u ON u.id = ho.hotel_user_id
+       LEFT JOIN hotel_profiles hp ON hp.user_id = ho.hotel_user_id
+       WHERE ho.organization_id = $1
+         AND ho.hotel_user_id::text = $2
+       LIMIT 1`,
+      [payload.sub, hotelId]
+    );
+
+    if (relationshipResult.rowCount === 0) {
+      return res.status(404).json({ error: { message: "Hotel relationship not found for this organization" } });
+    }
+
+    const contract = await getLatestSignedContractForCorporateHotel(payload.sub, hotelId);
+    if (!contract) {
+      return res.status(400).json({ error: { message: "No signed contract found with this hotel" } });
+    }
+
+    const roomRates = Array.isArray(contract.contract_data?.roomRates)
+      ? contract.contract_data.roomRates
+      : [];
+
+    const roomTypes = roomRates
+      .map((roomRate: any) => {
+        const roomType = typeof roomRate?.roomType === "string" ? roomRate.roomType.trim() : "";
+        const nightlyRate = resolveNightlyRate(roomRate);
+        return {
+          roomType,
+          nightlyRate,
+          inclusions: typeof roomRate?.inclusions === "string" ? roomRate.inclusions : null
+        };
+      })
+      .filter((item: { roomType: string; nightlyRate: number | null }) => item.roomType.length > 0 && item.nightlyRate !== null)
+      .map((item: { roomType: string; nightlyRate: number | null; inclusions: string | null }) => ({
+        roomType: item.roomType,
+        nightlyRate: Number(item.nightlyRate),
+        inclusions: item.inclusions
+      }));
+
+    const employeesResult = await query(
+      `SELECT id, employee_code, full_name, email, department, designation
+       FROM corporate_employees
+       WHERE organization_id = $1
+         AND is_active = true
+       ORDER BY full_name ASC`,
+      [payload.sub]
+    );
+
+    const employees = employeesResult.rows.map((row) => ({
+      id: row.id,
+      employeeCode: row.employee_code,
+      fullName: row.full_name,
+      email: row.email,
+      department: row.department,
+      designation: row.designation
+    }));
+
+    const hotelRow = relationshipResult.rows[0];
+    return res.status(200).json({
+      hotel: {
+        id: hotelId,
+        name: hotelRow.hotel_name,
+        email: hotelRow.hotel_email
+      },
+      contractId: contract.id,
+      employees,
+      roomTypes
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/corporate/booking-requests", async (req, res, next) => {
+  try {
+    const payload = getCorporatePayload(req, res);
+    if (!payload) {
+      return;
+    }
+
+    await ensureBookingRequestsTable();
+    const form = corporateBookingRequestSchema.parse(req.body);
+
+    const relationshipResult = await query(
+      `SELECT ho.hotel_user_id,
+              COALESCE(hp.hotel_name, u.full_name, u.email, 'Hotel') AS hotel_name,
+              COALESCE(hp.contact_email, u.email) AS hotel_email
+       FROM hotel_organizations ho
+       JOIN users u ON u.id = ho.hotel_user_id
+       LEFT JOIN hotel_profiles hp ON hp.user_id = ho.hotel_user_id
+       WHERE ho.organization_id = $1
+         AND ho.hotel_user_id::text = $2
+       LIMIT 1`,
+      [payload.sub, form.hotelId]
+    );
+
+    if (relationshipResult.rowCount === 0) {
+      return res.status(404).json({ error: { message: "Hotel relationship not found for this organization" } });
+    }
+
+    const employeeResult = await query(
+      `SELECT id, full_name
+       FROM corporate_employees
+       WHERE id = $1
+         AND organization_id = $2
+         AND is_active = true
+       LIMIT 1`,
+      [form.employeeId, payload.sub]
+    );
+
+    if (employeeResult.rowCount === 0) {
+      return res.status(400).json({ error: { message: "Selected employee is not active for this organization" } });
+    }
+
+    const contract = await getLatestSignedContractForCorporateHotel(payload.sub, form.hotelId);
+    if (!contract) {
+      return res.status(400).json({ error: { message: "No signed contract found with this hotel" } });
+    }
+
+    const roomRates = Array.isArray(contract.contract_data?.roomRates)
+      ? contract.contract_data.roomRates
+      : [];
+
+    const selectedRoom = roomRates.find((roomRate: any) => {
+      const contractRoomType = typeof roomRate?.roomType === "string" ? roomRate.roomType.trim().toLowerCase() : "";
+      return contractRoomType.length > 0 && contractRoomType === form.roomType.trim().toLowerCase();
+    });
+
+    if (!selectedRoom) {
+      return res.status(400).json({ error: { message: "Room type is not allowed by the signed contract" } });
+    }
+
+    const contractNightlyRate = resolveNightlyRate(selectedRoom);
+    if (contractNightlyRate === null) {
+      return res.status(400).json({ error: { message: "Selected room type has no valid rate in the signed contract" } });
+    }
+
+    const nights = getDaysBetween(form.checkInDate, form.checkOutDate);
+    const totalPrice = Number((nights * contractNightlyRate).toFixed(2));
+
+    const insertResult = await query(
+      `INSERT INTO booking_requests (
+         booking_number,
+         organization_id,
+         hotel_user_id,
+         employee_id,
+         room_type,
+         check_in_date,
+         check_out_date,
+         nights,
+         price_per_night,
+         total_price,
+         gst_applicable,
+         status
+       )
+       VALUES ($1, $2, $3, $4, $5, $6::date, $7::date, $8, $9, $10, $11, 'pending')
+       RETURNING id, booking_number, room_type, check_in_date, check_out_date, nights, price_per_night, total_price, gst_applicable, status, requested_at`,
+      [
+        form.bookingNumber.trim().toUpperCase(),
+        payload.sub,
+        form.hotelId,
+        form.employeeId,
+        form.roomType.trim(),
+        form.checkInDate,
+        form.checkOutDate,
+        nights,
+        contractNightlyRate,
+        totalPrice,
+        form.gstApplicable
+      ]
+    );
+
+    const requestRow = insertResult.rows[0];
+    const relationship = relationshipResult.rows[0];
+    const recipientEmail = normalizeOptional(relationship.hotel_email)?.toLowerCase();
+
+    if (recipientEmail) {
+      try {
+        const organizationResult = await query(
+          `SELECT name FROM organizations WHERE id = $1 LIMIT 1`,
+          [payload.sub]
+        );
+        const organizationName = organizationResult.rows[0]?.name ?? "Organization";
+
+        await sendBookingRequestHotelNotificationEmail({
+          recipientEmail,
+          hotelName: relationship.hotel_name,
+          organizationName,
+          bookingNumber: requestRow.booking_number,
+          employeeName: employeeResult.rows[0].full_name,
+          roomType: requestRow.room_type,
+          checkInDate: new Date(requestRow.check_in_date).toISOString().slice(0, 10),
+          checkOutDate: new Date(requestRow.check_out_date).toISOString().slice(0, 10),
+          totalPrice: Number(requestRow.total_price)
+        });
+      } catch (emailError) {
+        console.error("Failed to send booking request email to hotel", emailError);
+      }
+    }
+
+    return res.status(201).json({
+      request: {
+        id: requestRow.id,
+        bookingNumber: requestRow.booking_number,
+        roomType: requestRow.room_type,
+        checkInDate: requestRow.check_in_date,
+        checkOutDate: requestRow.check_out_date,
+        nights: Number(requestRow.nights),
+        pricePerNight: Number(requestRow.price_per_night),
+        totalPrice: Number(requestRow.total_price),
+        gstApplicable: Boolean(requestRow.gst_applicable),
+        status: requestRow.status,
+        requestedAt: requestRow.requested_at
+      }
+    });
+  } catch (error: any) {
+    if (error?.code === "23505") {
+      return res.status(409).json({ error: { message: "Booking number already exists for this hotel" } });
     }
     return next(error);
   }

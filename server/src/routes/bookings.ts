@@ -10,7 +10,10 @@ import {
   isSupabaseStorageConfigured,
   uploadBillFileToSupabase
 } from "../services/supabaseStorage.js";
-import { sendCorporateInvoiceCoverLetterEmail } from "../services/mailer.js";
+import {
+  sendBookingRequestAcceptedOrganizationEmail,
+  sendCorporateInvoiceCoverLetterEmail
+} from "../services/mailer.js";
 
 const router = Router();
 
@@ -23,6 +26,11 @@ const createBookingSchema = z.object({
   checkOutDate: z.string().min(8).max(20),
   gstApplicable: z.boolean().default(false),
   status: z.enum(["pending", "confirmed", "checked-in", "checked-out"]).default("pending")
+});
+
+const bookingRequestDecisionSchema = z.object({
+  action: z.enum(["accept", "reject"]),
+  rejectionReason: z.string().max(300).optional().nullable()
 });
 
 const bookingBillsSchema = z.object({
@@ -74,6 +82,7 @@ const normalizeOptional = (value?: string | null) => {
 };
 
 let ensureHotelOrganizationsTablePromise: Promise<void> | null = null;
+let ensureBookingRequestsTablePromise: Promise<void> | null = null;
 
 const ensureHotelOrganizationsTable = async () => {
   if (!ensureHotelOrganizationsTablePromise) {
@@ -112,6 +121,69 @@ const ensureHotelOrganizationsTable = async () => {
   }
 
   await ensureHotelOrganizationsTablePromise;
+};
+
+const ensureBookingRequestsTable = async () => {
+  if (!ensureBookingRequestsTablePromise) {
+    ensureBookingRequestsTablePromise = (async () => {
+      await query(
+        `CREATE TABLE IF NOT EXISTS booking_requests (
+           id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+           booking_number text NOT NULL,
+           organization_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+           hotel_user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+           employee_id uuid NOT NULL REFERENCES corporate_employees(id) ON DELETE RESTRICT,
+           room_type text NOT NULL,
+           check_in_date date NOT NULL,
+           check_out_date date NOT NULL,
+           nights integer NOT NULL,
+           price_per_night numeric(12,2) NOT NULL,
+           total_price numeric(12,2) NOT NULL,
+           gst_applicable boolean NOT NULL DEFAULT false,
+           status text NOT NULL DEFAULT 'pending',
+           rejection_reason text,
+           requested_at timestamptz NOT NULL DEFAULT now(),
+           responded_at timestamptz,
+           responded_by text,
+           booking_id uuid REFERENCES hotel_bookings(id) ON DELETE SET NULL,
+           created_at timestamptz NOT NULL DEFAULT now(),
+           updated_at timestamptz NOT NULL DEFAULT now(),
+           UNIQUE (hotel_user_id, booking_number)
+         )`
+      );
+
+      await query(
+        `CREATE INDEX IF NOT EXISTS booking_requests_hotel_user_id_idx
+         ON booking_requests(hotel_user_id)`
+      );
+
+      await query(
+        `CREATE INDEX IF NOT EXISTS booking_requests_organization_id_idx
+         ON booking_requests(organization_id)`
+      );
+
+      await query(
+        `CREATE INDEX IF NOT EXISTS booking_requests_status_idx
+         ON booking_requests(status)`
+      );
+
+      await query(
+        `DROP TRIGGER IF EXISTS booking_requests_set_updated_at ON booking_requests`
+      );
+
+      await query(
+        `CREATE TRIGGER booking_requests_set_updated_at
+         BEFORE UPDATE ON booking_requests
+         FOR EACH ROW
+         EXECUTE PROCEDURE set_updated_at()`
+      );
+    })().catch((error) => {
+      ensureBookingRequestsTablePromise = null;
+      throw error;
+    });
+  }
+
+  await ensureBookingRequestsTablePromise;
 };
 
 const getDaysBetween = (checkInDate: string, checkOutDate: string) => {
@@ -196,10 +268,45 @@ const getLatestSignedContract = async (organizationId: string, hotelUserId: stri
   return contractResult.rows[0];
 };
 
+const prepareBookingDetails = async (payload: z.infer<typeof createBookingSchema>, hotelUserId: string) => {
+  const contract = await getLatestSignedContract(payload.organizationId, hotelUserId);
+  if (!contract) {
+    return { error: "Selected organization does not have a signed contract" };
+  }
+
+  const roomRates = Array.isArray(contract.contract_data?.roomRates)
+    ? contract.contract_data.roomRates
+    : [];
+
+  const selectedRoom = roomRates.find((roomRate: any) => {
+    const contractRoomType = typeof roomRate?.roomType === "string" ? roomRate.roomType.trim().toLowerCase() : "";
+    return contractRoomType.length > 0 && contractRoomType === payload.roomType.trim().toLowerCase();
+  });
+
+  if (!selectedRoom) {
+    return { error: "Room type is not allowed by the signed contract" };
+  }
+
+  const contractNightlyRate = resolveNightlyRate(selectedRoom);
+  if (contractNightlyRate === null) {
+    return { error: "Selected room type has no valid rate in the signed contract" };
+  }
+
+  const nights = getDaysBetween(payload.checkInDate, payload.checkOutDate);
+  const totalPrice = Number((nights * contractNightlyRate).toFixed(2));
+
+  return {
+    contractNightlyRate,
+    nights,
+    totalPrice
+  };
+};
+
 router.use(requireAuth);
 router.use(async (_req, _res, next) => {
   try {
     await ensureHotelOrganizationsTable();
+    await ensureBookingRequestsTable();
     return next();
   } catch (error) {
     return next(error);
@@ -527,33 +634,16 @@ router.get("/", async (req, res, next) => {
 router.post("/", async (req, res, next) => {
   try {
     const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: { message: "Unauthorized" } });
+    }
+
     const payload = createBookingSchema.parse(req.body);
 
-    const contract = await getLatestSignedContract(payload.organizationId, String(userId));
-    if (!contract) {
-      return res.status(400).json({ error: { message: "Selected organization does not have a signed contract" } });
+    const computed = await prepareBookingDetails(payload, String(userId));
+    if ("error" in computed) {
+      return res.status(400).json({ error: { message: computed.error } });
     }
-
-    const roomRates = Array.isArray(contract.contract_data?.roomRates)
-      ? contract.contract_data.roomRates
-      : [];
-
-    const selectedRoom = roomRates.find((roomRate: any) => {
-      const contractRoomType = typeof roomRate?.roomType === "string" ? roomRate.roomType.trim().toLowerCase() : "";
-      return contractRoomType.length > 0 && contractRoomType === payload.roomType.trim().toLowerCase();
-    });
-
-    if (!selectedRoom) {
-      return res.status(400).json({ error: { message: "Room type is not allowed by the signed contract" } });
-    }
-
-    const contractNightlyRate = resolveNightlyRate(selectedRoom);
-    if (contractNightlyRate === null) {
-      return res.status(400).json({ error: { message: "Selected room type has no valid rate in the signed contract" } });
-    }
-
-    const nights = getDaysBetween(payload.checkInDate, payload.checkOutDate);
-    const totalPrice = Number((nights * contractNightlyRate).toFixed(2));
 
     const result = await query(
       `INSERT INTO hotel_bookings (
@@ -581,9 +671,9 @@ router.post("/", async (req, res, next) => {
         payload.roomType.trim(),
         payload.checkInDate,
         payload.checkOutDate,
-        nights,
-        contractNightlyRate,
-        totalPrice,
+        computed.nights,
+        computed.contractNightlyRate,
+        computed.totalPrice,
         payload.gstApplicable,
         payload.status,
         userId ?? null
@@ -613,6 +703,238 @@ router.post("/", async (req, res, next) => {
       return res.status(409).json({ error: { message: "Booking number already exists" } });
     }
     return next(error);
+  }
+});
+
+router.get("/requests", async (req, res, next) => {
+  try {
+    const userId = req.user?.id;
+    const status = typeof req.query.status === "string" ? req.query.status : null;
+
+    const result = await query(
+      `SELECT br.id,
+              br.booking_number,
+              br.organization_id,
+              br.employee_id,
+              br.room_type,
+              br.check_in_date,
+              br.check_out_date,
+              br.nights,
+              br.price_per_night,
+              br.total_price,
+              br.gst_applicable,
+              br.status,
+              br.rejection_reason,
+              br.requested_at,
+              br.responded_at,
+              br.booking_id,
+              o.name AS organization_name,
+              o.contact_email AS organization_email,
+              e.full_name AS employee_name,
+              e.employee_code
+       FROM booking_requests br
+       JOIN organizations o ON o.id = br.organization_id
+       JOIN corporate_employees e ON e.id = br.employee_id
+       WHERE br.hotel_user_id = $1
+         AND ($2::text IS NULL OR br.status = $2)
+       ORDER BY br.requested_at DESC`,
+      [userId, status]
+    );
+
+    const requests = result.rows.map((row) => ({
+      id: row.id,
+      bookingNumber: row.booking_number,
+      organizationId: row.organization_id,
+      organizationName: row.organization_name,
+      organizationEmail: row.organization_email,
+      employeeId: row.employee_id,
+      employeeName: row.employee_name,
+      employeeCode: row.employee_code,
+      roomType: row.room_type,
+      checkInDate: row.check_in_date,
+      checkOutDate: row.check_out_date,
+      nights: Number(row.nights),
+      pricePerNight: Number(row.price_per_night),
+      totalPrice: Number(row.total_price),
+      gstApplicable: Boolean(row.gst_applicable),
+      status: row.status,
+      rejectionReason: row.rejection_reason,
+      requestedAt: row.requested_at,
+      respondedAt: row.responded_at,
+      bookingId: row.booking_id
+    }));
+
+    return res.status(200).json({ requests });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/requests/:requestId/decision", async (req, res, next) => {
+  const client = await pool.connect();
+
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: { message: "Unauthorized" } });
+    }
+
+    const requestId = req.params.requestId;
+    const payload = bookingRequestDecisionSchema.parse(req.body);
+
+    await client.query("BEGIN");
+
+    const requestResult = await client.query(
+      `SELECT br.id,
+              br.booking_number,
+              br.organization_id,
+              br.hotel_user_id,
+              br.employee_id,
+              br.room_type,
+              br.check_in_date,
+              br.check_out_date,
+              br.nights,
+              br.price_per_night,
+              br.total_price,
+              br.gst_applicable,
+              br.status,
+              br.booking_id,
+              o.name AS organization_name,
+              o.contact_email AS organization_email,
+              e.full_name AS employee_name,
+              hp.hotel_name,
+              hp.contact_email AS hotel_contact_email,
+              u.email AS hotel_user_email
+       FROM booking_requests br
+       JOIN organizations o ON o.id = br.organization_id
+       JOIN corporate_employees e ON e.id = br.employee_id
+       LEFT JOIN hotel_profiles hp ON hp.user_id = br.hotel_user_id
+       LEFT JOIN users u ON u.id = br.hotel_user_id
+       WHERE br.id = $1
+         AND br.hotel_user_id::text = $2
+       FOR UPDATE OF br`,
+      [requestId, userId]
+    );
+
+    if (requestResult.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: { message: "Booking request not found" } });
+    }
+
+    const bookingRequest = requestResult.rows[0];
+    if (bookingRequest.status !== "pending") {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: { message: "Booking request already processed" } });
+    }
+
+    if (payload.action === "reject") {
+      await client.query(
+        `UPDATE booking_requests
+         SET status = 'rejected',
+             rejection_reason = $2,
+             responded_at = now(),
+             responded_by = $3
+         WHERE id = $1`,
+        [requestId, normalizeOptional(payload.rejectionReason), userId]
+      );
+
+      await client.query("COMMIT");
+      return res.status(200).json({ ok: true, status: "rejected" });
+    }
+
+    const bookingInsert = await client.query(
+      `INSERT INTO hotel_bookings (
+         booking_number,
+         organization_id,
+         employee_id,
+         room_type,
+         check_in_date,
+         check_out_date,
+         nights,
+         price_per_night,
+         total_price,
+         gst_applicable,
+         status,
+         created_by
+       )
+       VALUES ($1, $2, $3, $4, $5::date, $6::date, $7, $8, $9, $10, 'pending', $11)
+       RETURNING id, booking_number, organization_id, employee_id, room_type,
+                 check_in_date, check_out_date, nights, price_per_night,
+                 total_price, gst_applicable, status, created_at`,
+      [
+        String(bookingRequest.booking_number).trim().toUpperCase(),
+        bookingRequest.organization_id,
+        bookingRequest.employee_id,
+        bookingRequest.room_type,
+        bookingRequest.check_in_date,
+        bookingRequest.check_out_date,
+        Number(bookingRequest.nights),
+        Number(bookingRequest.price_per_night),
+        Number(bookingRequest.total_price),
+        Boolean(bookingRequest.gst_applicable),
+        userId
+      ]
+    );
+
+    const acceptedBooking = bookingInsert.rows[0];
+
+    await client.query(
+      `UPDATE booking_requests
+       SET status = 'accepted',
+           responded_at = now(),
+           responded_by = $2,
+           booking_id = $3
+       WHERE id = $1`,
+      [requestId, userId, acceptedBooking.id]
+    );
+
+    await client.query("COMMIT");
+
+    const recipientEmail = normalizeOptional(bookingRequest.organization_email)?.toLowerCase();
+    if (recipientEmail) {
+      try {
+        await sendBookingRequestAcceptedOrganizationEmail({
+          recipientEmail,
+          organizationName: bookingRequest.organization_name,
+          hotelName: normalizeOptional(bookingRequest.hotel_name) ?? "Hotel",
+          bookingNumber: acceptedBooking.booking_number,
+          employeeName: bookingRequest.employee_name,
+          roomType: bookingRequest.room_type,
+          checkInDate: new Date(bookingRequest.check_in_date).toISOString().slice(0, 10),
+          checkOutDate: new Date(bookingRequest.check_out_date).toISOString().slice(0, 10)
+        });
+      } catch (emailError) {
+        console.error("Failed to send booking request acceptance email", emailError);
+      }
+    }
+
+    return res.status(200).json({
+      ok: true,
+      status: "accepted",
+      booking: {
+        id: acceptedBooking.id,
+        bookingNumber: acceptedBooking.booking_number,
+        organizationId: acceptedBooking.organization_id,
+        employeeId: acceptedBooking.employee_id,
+        roomType: acceptedBooking.room_type,
+        checkInDate: acceptedBooking.check_in_date,
+        checkOutDate: acceptedBooking.check_out_date,
+        nights: Number(acceptedBooking.nights),
+        pricePerNight: Number(acceptedBooking.price_per_night),
+        totalPrice: Number(acceptedBooking.total_price),
+        gstApplicable: Boolean(acceptedBooking.gst_applicable),
+        status: acceptedBooking.status,
+        createdAt: acceptedBooking.created_at
+      }
+    });
+  } catch (error: any) {
+    await client.query("ROLLBACK");
+    if (error?.code === "23505") {
+      return res.status(409).json({ error: { message: "Booking number already exists" } });
+    }
+    return next(error);
+  } finally {
+    client.release();
   }
 });
 
