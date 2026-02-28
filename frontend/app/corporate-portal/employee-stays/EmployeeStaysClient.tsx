@@ -34,6 +34,11 @@ const getStatusColor = (status: Stay['status']) => {
   }
 }
 
+const formatInrAmount = (value: number) => value.toLocaleString('en-IN', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2
+})
+
 export default function EmployeeStaysClient() {
   const router = useRouter()
   const [stays, setStays] = useState<Stay[]>([])
@@ -156,7 +161,7 @@ export default function EmployeeStaysClient() {
                   <span className="material-symbols-outlined text-primary bg-primary/10 p-1.5 rounded-full text-[20px]">attach_money</span>
                   <p className="text-slate-500 dark:text-slate-400 text-sm font-medium uppercase tracking-wider">Total Spend YTD</p>
                 </div>
-                <p className="text-slate-900 dark:text-white text-2xl font-bold tracking-tight">${totalSpend.toFixed(2)}</p>
+                <p className="text-slate-900 dark:text-white text-2xl font-bold tracking-tight">₹{formatInrAmount(totalSpend)}</p>
                 <p className="text-emerald-600 dark:text-emerald-400 text-xs font-medium flex items-center gap-1 mt-1">
                   <span className="material-symbols-outlined text-[14px]">trending_up</span>
                   +12% vs last month
@@ -276,7 +281,7 @@ export default function EmployeeStaysClient() {
                           {stay.checkInDate} - {stay.checkOutDate}, 2023
                         </td>
                         <td className="p-4 text-sm text-center text-slate-900 dark:text-slate-300">{stay.nights}</td>
-                        <td className="p-4 text-sm font-bold text-right text-slate-900 dark:text-slate-200">${stay.totalAmount.toFixed(2)}</td>
+                        <td className="p-4 text-sm font-bold text-right text-slate-900 dark:text-slate-200">₹{formatInrAmount(stay.totalAmount)}</td>
                         <td className="p-4">
                           <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(stay.status)}`}>
                             {stay.status}

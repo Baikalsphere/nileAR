@@ -6,13 +6,9 @@ import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-  createCorporateBookingRequest,
   corporateTokenStorage,
-  fetchCorporateBookingRequestMeta,
   fetchCorporateHotels,
   fetchCorporateInvoices,
-  type CorporateBookingRequestEmployee,
-  type CorporateBookingRequestRoomType,
   type CorporateHotelSummary,
   type CorporateInvoice
 } from '@/lib/corporateAuth'
@@ -38,20 +34,6 @@ export default function HotelReconciliationClient({ hotelId }: { hotelId: string
   const [hotel, setHotel] = useState<CorporateHotelSummary | null>(null)
   const [invoices, setInvoices] = useState<CorporateInvoice[]>([])
   const [filterStatus, setFilterStatus] = useState<'all' | 'paid' | 'unpaid' | 'overdue'>('all')
-  const [showRequestModal, setShowRequestModal] = useState(false)
-  const [isLoadingRequestMeta, setIsLoadingRequestMeta] = useState(false)
-  const [isSubmittingRequest, setIsSubmittingRequest] = useState(false)
-  const [requestEmployees, setRequestEmployees] = useState<CorporateBookingRequestEmployee[]>([])
-  const [requestRoomTypes, setRequestRoomTypes] = useState<CorporateBookingRequestRoomType[]>([])
-  const [requestSuccessMessage, setRequestSuccessMessage] = useState<string | null>(null)
-  const [requestForm, setRequestForm] = useState({
-    bookingNumber: `BK-${Math.floor(100 + Math.random() * 900)}`,
-    employeeId: '',
-    checkInDate: '',
-    checkOutDate: '',
-    roomType: '',
-    gstApplicable: false
-  })
 
   useEffect(() => {
     const token = corporateTokenStorage.get()
@@ -122,59 +104,6 @@ export default function HotelReconciliationClient({ hotelId }: { hotelId: string
     }
   }, [invoices])
 
-  const selectedRoomTypeDetails = requestRoomTypes.find((roomType) => roomType.roomType === requestForm.roomType) ?? null
-
-  const openRequestModal = async () => {
-    setRequestSuccessMessage(null)
-    setError(null)
-    setIsLoadingRequestMeta(true)
-    try {
-      const meta = await fetchCorporateBookingRequestMeta(hotelId)
-      setRequestEmployees(meta.employees)
-      setRequestRoomTypes(meta.roomTypes)
-      setShowRequestModal(true)
-    } catch (metaError) {
-      const message = metaError instanceof Error ? metaError.message : 'Failed to load booking request metadata'
-      setError(message)
-    } finally {
-      setIsLoadingRequestMeta(false)
-    }
-  }
-
-  const handleCreateBookingRequest = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    setIsSubmittingRequest(true)
-    setError(null)
-    setRequestSuccessMessage(null)
-
-    try {
-      await createCorporateBookingRequest({
-        hotelId,
-        bookingNumber: requestForm.bookingNumber,
-        employeeId: requestForm.employeeId,
-        checkInDate: requestForm.checkInDate,
-        checkOutDate: requestForm.checkOutDate,
-        roomType: requestForm.roomType,
-        gstApplicable: requestForm.gstApplicable
-      })
-
-      setShowRequestModal(false)
-      setRequestForm({
-        bookingNumber: `BK-${Math.floor(100 + Math.random() * 900)}`,
-        employeeId: '',
-        checkInDate: '',
-        checkOutDate: '',
-        roomType: '',
-        gstApplicable: false
-      })
-      setRequestSuccessMessage('Booking request sent successfully. The hotel has been notified by email.')
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : 'Unable to send booking request')
-    } finally {
-      setIsSubmittingRequest(false)
-    }
-  }
-
   if (isLoading) {
     return (
       <div className="flex h-screen w-full overflow-hidden bg-background-light dark:bg-background-dark text-slate-900 dark:text-white font-display selection:bg-primary/20">
@@ -225,13 +154,7 @@ export default function HotelReconciliationClient({ hotelId }: { hotelId: string
               </div>
             )}
 
-            {requestSuccessMessage && (
-              <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700 dark:border-emerald-900/30 dark:bg-emerald-900/10 dark:text-emerald-300">
-                {requestSuccessMessage}
-              </div>
-            )}
-
-            <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
+            <div className="flex flex-col gap-4">
               <div className="flex-1">
                 <div className="flex items-center gap-4 mb-3">
                   <h1 className="text-slate-900 dark:text-white text-3xl font-extrabold">{hotel.name}</h1>
@@ -254,15 +177,6 @@ export default function HotelReconciliationClient({ hotelId }: { hotelId: string
                   </div>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => void openRequestModal()}
-                disabled={isLoadingRequestMeta}
-                className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-all hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <span className="material-symbols-outlined text-[18px]">add</span>
-                <span>{isLoadingRequestMeta ? 'Loading...' : 'Request Booking'}</span>
-              </button>
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
@@ -342,134 +256,6 @@ export default function HotelReconciliationClient({ hotelId }: { hotelId: string
         </div>
       </main>
 
-      {showRequestModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900">
-            <div className="sticky top-0 flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4 dark:border-slate-700 dark:bg-slate-900">
-              <h3 className="text-xl font-bold text-slate-900 dark:text-white">Request New Booking</h3>
-              <button
-                type="button"
-                onClick={() => setShowRequestModal(false)}
-                className="text-slate-500 transition-colors hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
-              >
-                <span className="material-symbols-outlined text-[24px]">close</span>
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateBookingRequest} className="space-y-4 p-6">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="mb-2 block text-sm font-semibold text-slate-900 dark:text-white">Booking Number *</label>
-                  <input
-                    type="text"
-                    required
-                    value={requestForm.bookingNumber}
-                    onChange={(event) => setRequestForm({ ...requestForm, bookingNumber: event.target.value })}
-                    className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-slate-900 transition-all focus:border-transparent focus:ring-2 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  />
-                </div>
-                <div>
-                  <label className="mb-2 block text-sm font-semibold text-slate-900 dark:text-white">Employee *</label>
-                  <select
-                    required
-                    value={requestForm.employeeId}
-                    onChange={(event) => setRequestForm({ ...requestForm, employeeId: event.target.value })}
-                    className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-slate-900 transition-all focus:border-transparent focus:ring-2 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  >
-                    <option value="">Select employee</option>
-                    {requestEmployees.map((employee) => (
-                      <option key={employee.id} value={employee.id}>{employee.fullName} ({employee.employeeCode})</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="mb-2 block text-sm font-semibold text-slate-900 dark:text-white">Check-in Date *</label>
-                  <input
-                    type="date"
-                    required
-                    value={requestForm.checkInDate}
-                    onChange={(event) => setRequestForm({ ...requestForm, checkInDate: event.target.value })}
-                    className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-slate-900 transition-all focus:border-transparent focus:ring-2 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  />
-                </div>
-                <div>
-                  <label className="mb-2 block text-sm font-semibold text-slate-900 dark:text-white">Check-out Date *</label>
-                  <input
-                    type="date"
-                    required
-                    value={requestForm.checkOutDate}
-                    onChange={(event) => setRequestForm({ ...requestForm, checkOutDate: event.target.value })}
-                    className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-slate-900 transition-all focus:border-transparent focus:ring-2 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="mb-2 block text-sm font-semibold text-slate-900 dark:text-white">Room Type *</label>
-                  <select
-                    required
-                    value={requestForm.roomType}
-                    onChange={(event) => setRequestForm({ ...requestForm, roomType: event.target.value })}
-                    className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-slate-900 transition-all focus:border-transparent focus:ring-2 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                    disabled={requestRoomTypes.length === 0}
-                  >
-                    <option value="">Select room type</option>
-                    {requestRoomTypes.map((roomType) => (
-                      <option key={roomType.roomType} value={roomType.roomType}>{roomType.roomType}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="mb-2 block text-sm font-semibold text-slate-900 dark:text-white">Price Per Night</label>
-                  <div className="min-h-[42px] w-full rounded-lg border border-slate-200 bg-slate-100 px-4 py-2 text-slate-900 dark:border-slate-700 dark:bg-slate-800/60 dark:text-white">
-                    {selectedRoomTypeDetails ? `₹${selectedRoomTypeDetails.nightlyRate.toLocaleString()}` : 'Select a room type'}
-                  </div>
-                </div>
-              </div>
-
-              {selectedRoomTypeDetails?.inclusions && (
-                <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-700 dark:border-blue-900/40 dark:bg-blue-900/20 dark:text-blue-300">
-                  <span className="font-semibold">Contract Inclusions:</span> {selectedRoomTypeDetails.inclusions}
-                </div>
-              )}
-
-              <div className="flex items-center gap-3 pt-2">
-                <input
-                  type="checkbox"
-                  id="corporateGstApplicable"
-                  checked={requestForm.gstApplicable}
-                  onChange={(event) => setRequestForm({ ...requestForm, gstApplicable: event.target.checked })}
-                  className="h-4 w-4 cursor-pointer rounded border-slate-300 text-primary focus:ring-primary dark:border-slate-600"
-                />
-                <label htmlFor="corporateGstApplicable" className="cursor-pointer text-sm font-semibold text-slate-900 dark:text-white">
-                  GST Applicable
-                </label>
-              </div>
-
-              <div className="flex gap-3 border-t border-slate-200 pt-4 dark:border-slate-700">
-                <button
-                  type="button"
-                  onClick={() => setShowRequestModal(false)}
-                  className="flex-1 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:hover:bg-slate-700"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmittingRequest}
-                  className="flex-1 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-all hover:bg-blue-700"
-                >
-                  {isSubmittingRequest ? 'Sending...' : 'Send Request'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

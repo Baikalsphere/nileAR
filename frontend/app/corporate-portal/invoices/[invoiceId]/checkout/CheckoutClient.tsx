@@ -51,6 +51,11 @@ const invoicesForCheckout: InvoiceData[] = [
 
 type PaymentMethod = 'card' | 'bank' | 'credit'
 
+const formatInrAmount = (value: number) => value.toLocaleString('en-IN', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2
+})
+
 export default function CheckoutClient() {
   const params = useParams()
   const router = useRouter()
@@ -114,7 +119,7 @@ export default function CheckoutClient() {
               </div>
               <h1 className="text-3xl font-black tracking-tight text-slate-900 dark:text-white">Payment Successful</h1>
               <p className="text-slate-500 dark:text-slate-400 text-lg">
-                Your payment of <span className="font-bold text-slate-900 dark:text-white">${totalAmount.toFixed(2)}</span> has been processed successfully.
+                Your payment of <span className="font-bold text-slate-900 dark:text-white">₹{formatInrAmount(totalAmount)}</span> has been processed successfully.
               </p>
               <div className="bg-slate-50 dark:bg-slate-800 rounded-lg p-4 w-full text-left flex flex-col gap-2">
                 <div className="flex justify-between text-sm">
@@ -241,7 +246,7 @@ export default function CheckoutClient() {
                             </>
                           ) : (
                             <p className="font-bold text-lg text-slate-900 dark:text-white">
-                              ${invoice.lineItems.reduce((s, i) => s + i.amount, 0).toFixed(2)}
+                              ₹{formatInrAmount(invoice.lineItems.reduce((s, i) => s + i.amount, 0))}
                             </p>
                           )}
                         </div>
@@ -263,7 +268,7 @@ export default function CheckoutClient() {
                                 <tr key={item.id}>
                                   <td className="py-4 text-slate-900 dark:text-slate-200">{item.description}</td>
                                   <td className="py-4 text-right font-medium text-slate-900 dark:text-white">
-                                    ${item.amount.toFixed(2)}
+                                    ₹{formatInrAmount(item.amount)}
                                   </td>
                                   <td className="py-4 text-right">
                                     {item.disputable ? (
@@ -281,7 +286,7 @@ export default function CheckoutClient() {
                               <tr>
                                 <td className="pt-4 font-bold text-slate-900 dark:text-white">Invoice Total</td>
                                 <td className="pt-4 text-right font-bold text-lg text-slate-900 dark:text-white">
-                                  ${invoice.lineItems.reduce((s, i) => s + i.amount, 0).toFixed(2)}
+                                  ₹{formatInrAmount(invoice.lineItems.reduce((s, i) => s + i.amount, 0))}
                                 </td>
                                 <td></td>
                               </tr>
@@ -454,7 +459,7 @@ export default function CheckoutClient() {
                               <div>
                                 <p className="text-sm font-bold text-slate-900 dark:text-white">Corporate Credit Line</p>
                                 <p className="text-xs text-slate-600 dark:text-slate-300 mt-1">
-                                  Payment will be charged to your corporate credit line. Available credit: <span className="font-bold text-green-600">$24,500.00</span>
+                                  Payment will be charged to your corporate credit line. Available credit: <span className="font-bold text-green-600">₹24,500.00</span>
                                 </p>
                               </div>
                             </div>
@@ -485,11 +490,11 @@ export default function CheckoutClient() {
                       <div className="flex flex-col gap-2">
                         <div className="flex justify-between items-center text-sm text-slate-600 dark:text-slate-400">
                           <span>Subtotal ({invoicesForCheckout.length} Invoices)</span>
-                          <span>${subtotal.toFixed(2)}</span>
+                          <span>₹{formatInrAmount(subtotal)}</span>
                         </div>
                         <div className="flex justify-between items-center text-sm text-slate-600 dark:text-slate-400">
                           <span>Taxes & Fees</span>
-                          <span>${taxesAndFees.toFixed(2)}</span>
+                          <span>₹{formatInrAmount(taxesAndFees)}</span>
                         </div>
                         <div className="flex justify-between items-end mt-2 pt-2 border-t border-dashed border-slate-200 dark:border-slate-700">
                           <div className="flex flex-col">
@@ -497,7 +502,7 @@ export default function CheckoutClient() {
                             <span className="text-xs text-primary cursor-pointer hover:underline">View Breakdown</span>
                           </div>
                           <span className="text-3xl font-black text-slate-900 dark:text-white tracking-tight">
-                            ${totalAmount.toFixed(2)}
+                            ₹{formatInrAmount(totalAmount)}
                           </span>
                         </div>
                       </div>
@@ -520,7 +525,7 @@ export default function CheckoutClient() {
                           <>
                             <span className="material-symbols-outlined group-hover:hidden">lock</span>
                             <span className="material-symbols-outlined hidden group-hover:block">lock_open</span>
-                            Pay ${totalAmount.toFixed(2)}
+                            Pay ₹{formatInrAmount(totalAmount)}
                           </>
                         )}
                       </button>

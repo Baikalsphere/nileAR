@@ -39,6 +39,8 @@ interface InvoiceWorkflowData {
   }
 }
 
+const formatInr = (value: number) => value.toLocaleString('en-IN')
+
 export default function InvoiceAutomationWorkflow({ 
   bookingId, 
   customerName,
@@ -891,7 +893,7 @@ function VerificationStep({ customerName, corporationName, totalAmount, invoiceT
               <p className="text-xs text-text-sub-light dark:text-text-sub-dark uppercase tracking-wide mb-1">
                 Total Amount
               </p>
-              <p className="font-bold text-lg text-primary">${totalAmount.toLocaleString()}</p>
+              <p className="font-bold text-lg text-primary">₹{formatInr(totalAmount)}</p>
             </div>
             <div>
               <p className="text-xs text-text-sub-light dark:text-text-sub-dark uppercase tracking-wide mb-1">
@@ -1090,7 +1092,7 @@ function EInvoiceStep({ invoiceNumber, totalAmount, onGenerate, onSkip, onBack }
           </div>
           <div className="flex justify-between">
             <span className="text-text-sub-light dark:text-text-sub-dark">Gross Amount:</span>
-            <span className="font-bold text-text-main-light dark:text-text-main-dark">${totalAmount.toLocaleString()}</span>
+            <span className="font-bold text-text-main-light dark:text-text-main-dark">₹{formatInr(totalAmount)}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-text-sub-light dark:text-text-sub-dark">GST Status:</span>
@@ -1313,13 +1315,13 @@ function CoverLetterStep({ invoiceNumber, customerName, corporationName, totalAm
               Greetings from our side.
             </p>
             <p>
-              Please find below the Statement of Accounts for your reference, reflecting the transactions recorded in our books up to date. As per our records, an outstanding balance of <strong>${totalAmount.toLocaleString()}</strong> is currently due for payment. We request you to kindly review the statement and arrange for payment at the earliest.
+              Please find below the Statement of Accounts for your reference, reflecting the transactions recorded in our books up to date. As per our records, an outstanding balance of <strong>₹{formatInr(totalAmount)}</strong> is currently due for payment. We request you to kindly review the statement and arrange for payment at the earliest.
             </p>
             <div className="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-700 p-4 rounded text-xs my-4">
               <p className="font-bold mb-2 text-emerald-900 dark:text-emerald-300">Invoice Details:</p>
               <div className="space-y-1 text-emerald-800 dark:text-emerald-400">
                 <div><strong>Invoice Number:</strong> {invoiceNumber}</div>
-                <div><strong>Amount:</strong> ${totalAmount.toLocaleString()}</div>
+                <div><strong>Amount:</strong> ₹{formatInr(totalAmount)}</div>
                 {eInvoiceArn && <div><strong>E-Invoice ARN:</strong> {eInvoiceArn}</div>}
                 <div><strong>Generated:</strong> {new Date().toLocaleDateString()} {new Date().toLocaleTimeString()}</div>
                 <div><strong>Supporting Documents:</strong> Attached (POS receipts, verifications, audit trail)</div>

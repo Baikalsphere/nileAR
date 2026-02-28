@@ -1,9 +1,249 @@
 "use client"
 
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import {
+  CorporateEmployeeStay,
+  CorporateInvoice,
+  corporateTokenStorage,
+  fetchCorporateEmployeeStays,
+  fetchCorporateInvoices
+} from '@/lib/corporateAuth'
+
+interface DepartmentSpend {
+  label: string
+  amount: number
+}
+
+interface TravelerSpend {
+  employeeName: string
+  employeeCode: string
+  department: string
+  stays: number
+  totalSpend: number
+}
+
+const monthLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+const formatInr = (amount: number, digits = 0) => amount.toLocaleString('en-IN', {
+  minimumFractionDigits: digits,
+  maximumFractionDigits: digits
+})
+
+const formatDateRange = (start: Date, end: Date) => {
+  const startText = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  const endText = end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  return `${startText} - ${endText}`
+}
+
+const getQuarterRange = (date = new Date()) => {
+  const quarterStartMonth = Math.floor(date.getMonth() / 3) * 3
+  const start = new Date(date.getFullYear(), quarterStartMonth, 1)
+  const end = new Date(date.getFullYear(), quarterStartMonth + 3, 0)
+  return { start, end }
+}
+
+const getPreviousQuarterRange = (currentStart: Date) => {
+  const previousQuarterEnd = new Date(currentStart.getFullYear(), currentStart.getMonth(), 0)
+  const previousQuarterStart = new Date(previousQuarterEnd.getFullYear(), previousQuarterEnd.getMonth() - 2, 1)
+  return { start: previousQuarterStart, end: previousQuarterEnd }
+}
+
+const percentDelta = (current: number, previous: number) => {
+  if (previous <= 0) {
+    return null
+  }
+
+  return ((current - previous) / previous) * 100
+}
+
+const getInitials = (fullName: string) => {
+  const parts = fullName.split(' ').filter(Boolean)
+  if (parts.length === 0) {
+    return 'NA'
+  }
+
+  return parts.slice(0, 2).map((part) => part[0]?.toUpperCase() ?? '').join('')
+}
+
+const getDepartmentTone = (index: number) => {
+  const tones = [
+    'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
+    'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300',
+    'bg-pink-100 text-pink-800 dark:bg-pink-900/30 dark:text-pink-300',
+    'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300',
+    'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300'
+  ]
+
+  return tones[index % tones.length]
+}
 
 export default function ReportsClient() {
+  const router = useRouter()
   const [selectedPeriod, setSelectedPeriod] = useState('This Quarter')
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [invoices, setInvoices] = useState<CorporateInvoice[]>([])
+  const [stays, setStays] = useState<CorporateEmployeeStay[]>([])
+
+  useEffect(() => {
+    const token = corporateTokenStorage.get()
+    if (!token) {
+      router.replace('/corporate-portal/login')
+      return
+    }
+
+    const loadReportData = async () => {
+      setIsLoading(true)
+      setError(null)
+
+      try {
+        const [invoiceResponse, stayResponse] = await Promise.all([
+          fetchCorporateInvoices(),
+          fetchCorporateEmployeeStays()
+        ])
+
+        setInvoices(invoiceResponse.invoices)
+        setStays(stayResponse.stays)
+      } catch (loadError) {
+        const message = loadError instanceof Error ? loadError.message : 'Failed to load report data'
+        setError(message)
+
+        if (message.toLowerCase().includes('unauthorized')) {
+          corporateTokenStorage.clear()
+          router.replace('/corporate-portal/login')
+          return
+        }
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    void loadReportData()
+  }, [router])
+
+  const quarter = useMemo(() => getQuarterRange(new Date()), [])
+  const previousQuarter = useMemo(() => getPreviousQuarterRange(quarter.start), [quarter.start])
+
+  const quarterStays = useMemo(() => stays.filter((stay) => {
+    const checkIn = new Date(stay.checkInDate)
+    return checkIn >= quarter.start && checkIn <= quarter.end
+  }), [stays, quarter.end, quarter.start])
+
+  const previousQuarterStays = useMemo(() => stays.filter((stay) => {
+    const checkIn = new Date(stay.checkInDate)
+    return checkIn >= previousQuarter.start && checkIn <= previousQuarter.end
+  }), [stays, previousQuarter.end, previousQuarter.start])
+
+  const quarterInvoices = useMemo(() => invoices.filter((invoice) => {
+    const invoiceDate = new Date(invoice.invoiceDate)
+    return invoiceDate >= quarter.start && invoiceDate <= quarter.end
+  }), [invoices, quarter.end, quarter.start])
+
+  const previousQuarterInvoices = useMemo(() => invoices.filter((invoice) => {
+    const invoiceDate = new Date(invoice.invoiceDate)
+    return invoiceDate >= previousQuarter.start && invoiceDate <= previousQuarter.end
+  }), [invoices, previousQuarter.end, previousQuarter.start])
+
+  const totalSpend = useMemo(() => quarterInvoices.reduce((sum, invoice) => sum + invoice.amount, 0), [quarterInvoices])
+  const previousSpend = useMemo(() => previousQuarterInvoices.reduce((sum, invoice) => sum + invoice.amount, 0), [previousQuarterInvoices])
+  const totalNights = useMemo(() => quarterStays.reduce((sum, stay) => sum + stay.nights, 0), [quarterStays])
+  const previousNights = useMemo(() => previousQuarterStays.reduce((sum, stay) => sum + stay.nights, 0), [previousQuarterStays])
+  const adr = totalNights > 0 ? totalSpend / totalNights : 0
+  const previousAdr = previousNights > 0 ? previousSpend / previousNights : 0
+
+  const spendDelta = percentDelta(totalSpend, previousSpend)
+  const nightsDelta = percentDelta(totalNights, previousNights)
+  const adrDelta = percentDelta(adr, previousAdr)
+
+  const spendByDepartment = useMemo<DepartmentSpend[]>(() => {
+    const byDepartment = new Map<string, number>()
+
+    quarterStays.forEach((stay) => {
+      const key = stay.department?.trim() || 'Unassigned'
+      byDepartment.set(key, (byDepartment.get(key) ?? 0) + stay.totalAmount)
+    })
+
+    return [...byDepartment.entries()]
+      .map(([label, amount]) => ({ label, amount }))
+      .sort((a, b) => b.amount - a.amount)
+      .slice(0, 5)
+  }, [quarterStays])
+
+  const monthlyAdr = useMemo(() => {
+    const currentYear = new Date().getFullYear()
+    const accumulator = new Map<number, { amount: number; nights: number }>()
+
+    stays.forEach((stay) => {
+      const date = new Date(stay.checkInDate)
+      if (date.getFullYear() !== currentYear) {
+        return
+      }
+
+      const month = date.getMonth()
+      const current = accumulator.get(month) ?? { amount: 0, nights: 0 }
+      accumulator.set(month, {
+        amount: current.amount + stay.totalAmount,
+        nights: current.nights + stay.nights
+      })
+    })
+
+    return Array.from({ length: 12 }, (_, monthIndex) => {
+      const monthData = accumulator.get(monthIndex)
+      const monthAdr = monthData && monthData.nights > 0 ? monthData.amount / monthData.nights : 0
+
+      return {
+        month: monthLabels[monthIndex],
+        adr: monthAdr
+      }
+    })
+  }, [stays])
+
+  const peakAdr = useMemo(() => Math.max(...monthlyAdr.map((item) => item.adr), 0), [monthlyAdr])
+
+  const topTravelers = useMemo<TravelerSpend[]>(() => {
+    const byTraveler = new Map<string, TravelerSpend>()
+
+    quarterStays.forEach((stay) => {
+      const key = `${stay.employeeCode}-${stay.employeeName}`
+      const current = byTraveler.get(key)
+
+      if (current) {
+        current.stays += 1
+        current.totalSpend += stay.totalAmount
+        return
+      }
+
+      byTraveler.set(key, {
+        employeeName: stay.employeeName,
+        employeeCode: stay.employeeCode,
+        department: stay.department?.trim() || 'Unassigned',
+        stays: 1,
+        totalSpend: stay.totalAmount
+      })
+    })
+
+    return [...byTraveler.values()].sort((a, b) => b.totalSpend - a.totalSpend).slice(0, 6)
+  }, [quarterStays])
+
+  const quarterLabel = useMemo(() => formatDateRange(quarter.start, quarter.end), [quarter.end, quarter.start])
+  const chartMax = spendByDepartment.length > 0 ? Math.max(...spendByDepartment.map((item) => item.amount), 0) : 0
+
+  const formatDelta = (value: number | null) => {
+    if (value === null) {
+      return '—'
+    }
+
+    return `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`
+  }
+
+  const deltaTone = (value: number | null) => {
+    if (value === null) {
+      return 'text-slate-400'
+    }
+
+    return value >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
+  }
 
   return (
     <div className="flex-1 overflow-y-auto h-full relative">
@@ -12,7 +252,7 @@ export default function ReportsClient() {
         <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">Spend Analytics</h1>
-            <p className="text-slate-500 dark:text-slate-400 mt-1">Overview of company travel expenses • Oct 1, 2023 - Dec 31, 2023</p>
+            <p className="text-slate-500 dark:text-slate-400 mt-1">Overview of company travel expenses • {quarterLabel}</p>
           </div>
           <div className="flex items-center gap-3">
             <button className="flex items-center gap-2 px-4 py-2.5 text-sm font-semibold bg-white dark:bg-surface-dark border border-slate-200 dark:border-slate-700 rounded-lg shadow-sm hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors text-slate-700 dark:text-slate-200">
@@ -48,6 +288,18 @@ export default function ReportsClient() {
           <button className="ml-auto text-sm font-medium text-primary hover:text-blue-700">Clear all</button>
         </div>
 
+        {error && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/30 dark:bg-red-900/10 dark:text-red-300">
+            {error}
+          </div>
+        )}
+
+        {isLoading && (
+          <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-surface-dark px-6 py-10 text-center text-sm text-slate-500 dark:text-slate-400">
+            Loading report data...
+          </div>
+        )}
+
         {/* Stats KPI Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {/* Card 1 */}
@@ -58,10 +310,10 @@ export default function ReportsClient() {
                 <span className="material-symbols-outlined text-green-600 dark:text-green-400 text-[20px]">trending_up</span>
               </div>
             </div>
-            <p className="text-3xl font-bold text-slate-900 dark:text-white mt-2">$1.2M</p>
+            <p className="text-3xl font-bold text-slate-900 dark:text-white mt-2">₹{formatInr(totalSpend)}</p>
             <div className="flex items-center gap-2 mt-1">
-              <span className="text-sm font-bold text-green-600 dark:text-green-400">+12%</span>
-              <span className="text-sm text-slate-400">vs last year</span>
+              <span className={`text-sm font-bold ${deltaTone(spendDelta)}`}>{formatDelta(spendDelta)}</span>
+              <span className="text-sm text-slate-400">vs previous quarter</span>
             </div>
           </div>
 
@@ -73,10 +325,10 @@ export default function ReportsClient() {
                 <span className="material-symbols-outlined text-primary text-[20px]">bed</span>
               </div>
             </div>
-            <p className="text-3xl font-bold text-slate-900 dark:text-white mt-2">6,450</p>
+            <p className="text-3xl font-bold text-slate-900 dark:text-white mt-2">{formatInr(totalNights)}</p>
             <div className="flex items-center gap-2 mt-1">
-              <span className="text-sm font-bold text-green-600 dark:text-green-400">+5%</span>
-              <span className="text-sm text-slate-400">vs last year</span>
+              <span className={`text-sm font-bold ${deltaTone(nightsDelta)}`}>{formatDelta(nightsDelta)}</span>
+              <span className="text-sm text-slate-400">vs previous quarter</span>
             </div>
           </div>
 
@@ -88,10 +340,10 @@ export default function ReportsClient() {
                 <span className="material-symbols-outlined text-purple-600 dark:text-purple-400 text-[20px]">price_check</span>
               </div>
             </div>
-            <p className="text-3xl font-bold text-slate-900 dark:text-white mt-2">$185</p>
+            <p className="text-3xl font-bold text-slate-900 dark:text-white mt-2">₹{formatInr(adr, 2)}</p>
             <div className="flex items-center gap-2 mt-1">
-              <span className="text-sm font-bold text-green-600 dark:text-green-400">+2%</span>
-              <span className="text-sm text-slate-400">vs last year</span>
+              <span className={`text-sm font-bold ${deltaTone(adrDelta)}`}>{formatDelta(adrDelta)}</span>
+              <span className="text-sm text-slate-400">vs previous quarter</span>
             </div>
           </div>
         </div>
@@ -103,7 +355,7 @@ export default function ReportsClient() {
             <div className="flex justify-between items-start mb-6">
               <div>
                 <h3 className="text-lg font-bold text-slate-900 dark:text-white">Spend by Department</h3>
-                <p className="text-sm text-slate-500 dark:text-slate-400">Current Quarter Analysis</p>
+                <p className="text-sm text-slate-500 dark:text-slate-400">Current Quarter Analysis ({quarterLabel})</p>
               </div>
               <button className="text-slate-400 hover:text-primary">
                 <span className="material-symbols-outlined">more_horiz</span>
@@ -111,27 +363,26 @@ export default function ReportsClient() {
             </div>
             <div className="flex-1 flex items-end justify-between gap-4 h-[250px] px-2">
               {/* Bar Items */}
-              {[
-                { label: 'Sales', height: '85%', value: '$450k' },
-                { label: 'Eng', height: '65%', value: '$320k' },
-                { label: 'HR', height: '45%', value: '$210k' },
-                { label: 'Mktg', height: '30%', value: '$140k' },
-                { label: 'Ops', height: '55%', value: '$265k' },
-              ].map((item) => (
-                <div key={item.label} className="flex flex-col items-center gap-2 flex-1 group cursor-pointer">
-                  <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-t-lg relative overflow-hidden h-full flex items-end">
+              {spendByDepartment.map((item) => {
+                const barHeight = chartMax > 0 ? `${Math.max(8, (item.amount / chartMax) * 100)}%` : '8%'
+                return (
+                <div key={item.label} className="flex flex-col items-center gap-2 flex-1 h-full group cursor-pointer">
+                  <div className="w-full flex-1 bg-slate-100 dark:bg-slate-700 rounded-t-lg relative overflow-hidden flex items-end">
                     <div 
                       className="w-full bg-primary opacity-90 group-hover:opacity-100 transition-all duration-500 relative" 
-                      style={{ height: item.height }}
+                      style={{ height: barHeight }}
                     >
                       <div className="opacity-0 group-hover:opacity-100 absolute -top-10 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-xs px-2 py-1 rounded whitespace-nowrap transition-opacity">
-                        {item.value}
+                        ₹{formatInr(item.amount)}
                       </div>
                     </div>
                   </div>
-                  <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">{item.label}</span>
+                  <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 text-center">{item.label}</span>
                 </div>
-              ))}
+              )})}
+              {spendByDepartment.length === 0 && (
+                <div className="h-full w-full flex items-center justify-center text-sm text-slate-400">No department spend data</div>
+              )}
             </div>
           </div>
 
@@ -140,14 +391,13 @@ export default function ReportsClient() {
             <div className="flex justify-between items-start mb-6">
               <div>
                 <h3 className="text-lg font-bold text-slate-900 dark:text-white">Average Daily Rate (ADR) Trends</h3>
-                <p className="text-sm text-slate-500 dark:text-slate-400">Jan - Dec 2023</p>
+                <p className="text-sm text-slate-500 dark:text-slate-400">Jan - Dec {new Date().getFullYear()}</p>
               </div>
               <button className="text-slate-400 hover:text-primary">
                 <span className="material-symbols-outlined">more_horiz</span>
               </button>
             </div>
             <div className="flex-1 flex flex-col justify-end relative h-[250px]">
-              {/* Background Grid Lines */}
               <div className="absolute inset-0 flex flex-col justify-between pointer-events-none">
                 <div className="border-t border-dashed border-slate-200 dark:border-slate-700 w-full"></div>
                 <div className="border-t border-dashed border-slate-200 dark:border-slate-700 w-full"></div>
@@ -155,26 +405,19 @@ export default function ReportsClient() {
                 <div className="border-t border-dashed border-slate-200 dark:border-slate-700 w-full"></div>
                 <div className="border-t border-slate-200 dark:border-slate-700 w-full"></div>
               </div>
-              {/* Chart SVG */}
-              <svg className="relative z-10 w-full h-full overflow-visible" preserveAspectRatio="none" viewBox="0 0 478 150" xmlns="http://www.w3.org/2000/svg">
-                <defs>
-                  <linearGradient gradientUnits="userSpaceOnUse" id="paint0_linear" x1="239" x2="239" y1="0" y2="150">
-                    <stop stopColor="#135bec" stopOpacity="0.2"></stop>
-                    <stop offset="1" stopColor="#135bec" stopOpacity="0"></stop>
-                  </linearGradient>
-                </defs>
-                <path d="M0 109C18.1538 109 18.1538 21 36.3077 21C54.4615 21 54.4615 41 72.6154 41C90.7692 41 90.7692 93 108.923 93C127.077 93 127.077 33 145.231 33C163.385 33 163.385 101 181.538 101C199.692 101 199.692 61 217.846 61C236 61 236 45 254.154 45C272.308 45 272.308 121 290.462 121C308.615 121 308.615 149 326.769 149C344.923 149 344.923 1 363.077 1C381.231 1 381.231 81 399.385 81C417.538 81 417.538 129 435.692 129C453.846 129 453.846 25 472 25V150H0V109Z" fill="url(#paint0_linear)"></path>
-                <path d="M0 109C18.1538 109 18.1538 21 36.3077 21C54.4615 21 54.4615 41 72.6154 41C90.7692 41 90.7692 93 108.923 93C127.077 93 127.077 33 145.231 33C163.385 33 163.385 101 181.538 101C199.692 101 199.692 61 217.846 61C236 61 236 45 254.154 45C272.308 45 272.308 121 290.462 121C308.615 121 308.615 149 326.769 149C344.923 149 344.923 1 363.077 1C381.231 1 381.231 81 399.385 81C417.538 81 417.538 129 435.692 129C453.846 129 453.846 25 472 25" stroke="#135bec" strokeLinecap="round" strokeLinejoin="round" strokeWidth="3"></path>
-              </svg>
-              {/* X Axis Labels */}
-              <div className="flex justify-between mt-4 text-xs font-bold text-slate-400 uppercase tracking-wide px-2">
-                <span>Jan</span>
-                <span>Mar</span>
-                <span>May</span>
-                <span>Jul</span>
-                <span>Sep</span>
-                <span>Nov</span>
-                <span>Dec</span>
+              <div className="relative z-10 flex items-end justify-between gap-2 h-full">
+                {monthlyAdr.map((point) => (
+                  <div key={point.month} className="flex flex-col items-center gap-2 flex-1 h-full group">
+                    <div className="w-full flex-1 bg-slate-100 dark:bg-slate-700 rounded-t-md flex items-end overflow-hidden">
+                      <div
+                        className="w-full bg-primary/85 group-hover:bg-primary transition-colors"
+                        style={{ height: `${peakAdr > 0 ? Math.max(6, (point.adr / peakAdr) * 100) : 6}%` }}
+                        title={`₹${formatInr(point.adr, 2)}`}
+                      ></div>
+                    </div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">{point.month}</span>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
@@ -201,97 +444,38 @@ export default function ReportsClient() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                {/* Row 1 */}
-                <tr className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group">
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className="flex items-center justify-center w-6 h-6 rounded-full bg-yellow-100 text-yellow-700 text-xs font-bold">1</span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center gap-3">
-                      <div className="h-10 w-10 rounded-full bg-cover bg-center" style={{backgroundImage: 'url("https://lh3.googleusercontent.com/aida-public/AB6AXuAqFRTZ1B8SzDvHxl7qCgwwxOx8cssScNhDceGQOVO5of9ZMHhmKgadvBRFJIQCgOY8cRNQTpdRRBYkDHHUkA0XdBHKvHiYrNje9yK1zDt1gXRRk3K2IMt3gKTKzfMYBPJ9k1hjn56f7pA-zNOwbGwKp5ERAoJfsZXMEwKSwHzELRGkmHjX6k_8axMgTkY_hBS5JkxlczEYQXsBnjPJ4qdJBT5LodoxZBlDjfZL16wFZwwbKSkUI8Co4XFUrF_SJ2vkAy4O74jy7Tg")'}}></div>
-                      <div>
-                        <p className="text-sm font-bold text-slate-900 dark:text-white">Sarah Jenkins</p>
-                        <p className="text-xs text-slate-500 dark:text-slate-400">VP of Sales</p>
+                {topTravelers.map((traveler, index) => (
+                  <tr key={`${traveler.employeeCode}-${traveler.employeeName}`} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group">
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold ${index === 0 ? 'bg-yellow-100 text-yellow-700' : 'bg-slate-100 text-slate-600'}`}>
+                        {index + 1}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="flex items-center gap-3">
+                        <div className="h-10 w-10 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-bold">
+                          {getInitials(traveler.employeeName)}
+                        </div>
+                        <div>
+                          <p className="text-sm font-bold text-slate-900 dark:text-white">{traveler.employeeName}</p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">{traveler.employeeCode}</p>
+                        </div>
                       </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
-                      Sales
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium text-slate-700 dark:text-slate-300">14</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-bold text-slate-900 dark:text-white">$8,400</td>
-                </tr>
-
-                {/* Row 2 */}
-                <tr className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group">
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className="flex items-center justify-center w-6 h-6 rounded-full bg-slate-100 text-slate-600 text-xs font-bold">2</span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center gap-3">
-                      <div className="h-10 w-10 rounded-full bg-cover bg-center" style={{backgroundImage: 'url("https://lh3.googleusercontent.com/aida-public/AB6AXuC3gLrU88CKE8rYjWq_LkKWonr3AXv7AqGu9ZmuKQ1jbEbJyLmjW5z5UkVhfRNV0y_i8pfgnH7B2mGgGi6C8JOU6nkOzMQu1-HYpYOhoAmqWeHkbMeWKNC8YxEsLBZ1AVB5kSuAn5wG2-yYvzsqyJhBCsyTMGQQ1hXoqCPvisqizHRAyg-3VGNPlSWUnmRJzI1UOf26nWafJiJKNjRBOijcbUzu_PGIyIgmCD3qFi9DwntfW0Q2n8vwYHGx2Y2VeSwzDwE_p6dazuk")'}}></div>
-                      <div>
-                        <p className="text-sm font-bold text-slate-900 dark:text-white">Michael Chen</p>
-                        <p className="text-xs text-slate-500 dark:text-slate-400">Senior Engineer</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300">
-                      Engineering
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium text-slate-700 dark:text-slate-300">10</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-bold text-slate-900 dark:text-white">$6,250</td>
-                </tr>
-
-                {/* Row 3 */}
-                <tr className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group">
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className="flex items-center justify-center w-6 h-6 rounded-full bg-slate-100 text-slate-600 text-xs font-bold">3</span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center gap-3">
-                      <div className="h-10 w-10 rounded-full bg-cover bg-center" style={{backgroundImage: 'url("https://lh3.googleusercontent.com/aida-public/AB6AXuAj3ag9VRYHQYWxcV6AK9lIAiGb0cbAKa1slsodIBvdXjZ0MwsWz-cYrwbI0AYsUiQ-kKdhi0F9bWgZy8Gug0lSvHgElNFMN1LHLt4fCybs97SbMbaZITT3PrlKs8zPIdGsKdTgd5hFT3odM0nW9t5d48mxhaFgE0C_tQQThSdryj1oNW4DsgyD2zv--TbULPWbyv0y0q__OlwFyBp86iaOvWorxqNug_nIbIA1RxUkKiINma4XNNfL0nJisgiwv_O9YoPKA7eIDOQ")'}}></div>
-                      <div>
-                        <p className="text-sm font-bold text-slate-900 dark:text-white">Emily Davis</p>
-                        <p className="text-xs text-slate-500 dark:text-slate-400">Recruiter</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-pink-100 text-pink-800 dark:bg-pink-900/30 dark:text-pink-300">
-                      HR
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium text-slate-700 dark:text-slate-300">8</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-bold text-slate-900 dark:text-white">$4,100</td>
-                </tr>
-
-                {/* Row 4 */}
-                <tr className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group">
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className="flex items-center justify-center w-6 h-6 rounded-full bg-slate-100 text-slate-600 text-xs font-bold">4</span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center gap-3">
-                      <div className="h-10 w-10 rounded-full bg-cover bg-center" style={{backgroundImage: 'url("https://lh3.googleusercontent.com/aida-public/AB6AXuD4mAtFKDWx0yIn6vE1-m_EhkIeRyIOPoELYpTeGUdDyis4dPvDUyDua1ocrngE5JSDFeGo5IU6vuYUOUMUTpbEZGlDfyBZNeQvLOjZA2ueTcqrJf4pR2iKpG6RsjIINmlDyndbQGjHaKlPeLG6qltWcuB9iUyCeT5QdbgotK2MhNxWp0VbS1-8Y7s2vuEEZT6PFiuCM1kfFNWAO_Npf2pSDYb29ToaIDhMsjQlOQS42BaG0MeY1T4jB417CpXCv9wmrG_4AvO4PYs")'}}></div>
-                      <div>
-                        <p className="text-sm font-bold text-slate-900 dark:text-white">James Wilson</p>
-                        <p className="text-xs text-slate-500 dark:text-slate-400">Marketing Lead</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300">
-                      Marketing
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium text-slate-700 dark:text-slate-300">6</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-bold text-slate-900 dark:text-white">$3,850</td>
-                </tr>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getDepartmentTone(index)}`}>
+                        {traveler.department}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium text-slate-700 dark:text-slate-300">{traveler.stays}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-bold text-slate-900 dark:text-white">₹{formatInr(traveler.totalSpend)}</td>
+                  </tr>
+                ))}
+                {!isLoading && topTravelers.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="px-6 py-8 text-center text-sm text-slate-500 dark:text-slate-400">No traveler spend data available for this quarter.</td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>

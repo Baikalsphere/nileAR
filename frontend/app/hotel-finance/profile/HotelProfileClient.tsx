@@ -20,6 +20,7 @@ export default function HotelProfileClient() {
   const [logoUrl, setLogoUrl] = useState<string | null>(null)
   const [logoFile, setLogoFile] = useState<File | null>(null)
   const [logoPreviewUrl, setLogoPreviewUrl] = useState<string | null>(null)
+  const [isLogoLoadFailed, setIsLogoLoadFailed] = useState(false)
   const [contactEmail, setContactEmail] = useState('')
   const [contactPhone, setContactPhone] = useState('')
   const [address, setAddress] = useState('')
@@ -49,6 +50,7 @@ export default function HotelProfileClient() {
         setGst(response.profile.gst ?? '')
         setLocation(response.profile.location ?? '')
         setLogoUrl(response.profile.logoUrl)
+        setIsLogoLoadFailed(false)
         setContactEmail(response.profile.contactEmail ?? '')
         setContactPhone(response.profile.contactPhone ?? '')
         setAddress(response.profile.address ?? '')
@@ -81,6 +83,7 @@ export default function HotelProfileClient() {
     try {
       const response = await uploadHotelLogo(logoFile)
       setLogoUrl(response.profile.logoUrl)
+      setIsLogoLoadFailed(false)
       setLogoFile(null)
       if (logoPreviewUrl) {
         URL.revokeObjectURL(logoPreviewUrl)
@@ -115,6 +118,7 @@ export default function HotelProfileClient() {
       setGst(response.profile.gst ?? '')
       setLocation(response.profile.location ?? '')
       setLogoUrl(response.profile.logoUrl)
+      setIsLogoLoadFailed(false)
       setContactEmail(response.profile.contactEmail ?? '')
       setContactPhone(response.profile.contactPhone ?? '')
       setAddress(response.profile.address ?? '')
@@ -129,6 +133,23 @@ export default function HotelProfileClient() {
 
   const handleLogoFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const selected = event.target.files?.[0] ?? null
+
+    if (selected) {
+      const maxBytes = 5 * 1024 * 1024
+      if (!selected.type.toLowerCase().startsWith('image/')) {
+        setError('Only image files are allowed for logo upload.')
+        event.target.value = ''
+        return
+      }
+
+      if (selected.size > maxBytes) {
+        setError('Logo must be 5MB or smaller.')
+        event.target.value = ''
+        return
+      }
+    }
+
+    setError(null)
     setLogoFile(selected)
 
     if (logoPreviewUrl) {
@@ -150,7 +171,7 @@ export default function HotelProfileClient() {
       return
     }
 
-    setLogoUrl(null)
+    setIsLogoLoadFailed(true)
   }
 
   const visibleLogoUrl = logoPreviewUrl ?? logoUrl
@@ -221,7 +242,7 @@ export default function HotelProfileClient() {
                     <label className="mb-1 block text-sm font-semibold text-text-main-light dark:text-text-main-dark">Hotel Logo</label>
                     <div className="rounded-lg border border-slate-200 dark:border-slate-700 p-4">
                       <div className="flex items-center gap-4">
-                        {visibleLogoUrl ? (
+                        {visibleLogoUrl && !isLogoLoadFailed ? (
                           <img
                             src={visibleLogoUrl}
                             alt="Hotel logo"
@@ -240,6 +261,9 @@ export default function HotelProfileClient() {
                             onChange={handleLogoFileChange}
                             className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                           />
+                          <p className="text-xs text-slate-500 dark:text-slate-400">
+                            Recommended: PNG/JPG/WebP, square logo, maximum 5MB.
+                          </p>
                           <div className="flex justify-end">
                             <button
                               type="button"

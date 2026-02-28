@@ -52,6 +52,8 @@ const corporateClients: CorporateClient[] = [
   { name: 'Digital Transformations Co', totalBookings: 22, totalSpent: 71200, occupiedNights: 112, avgBookingValue: 3236, paymentStatus: 'overdue' },
 ]
 
+const formatInr = (value: number) => value.toLocaleString('en-IN')
+
 export default function ReportsClient() {
   const [timeRange, setTimeRange] = useState('6months')
   const [selectedMetric, setSelectedMetric] = useState('revenue')
@@ -106,7 +108,7 @@ export default function ReportsClient() {
                   <span className="flex items-center text-xs font-bold text-success bg-success/10 px-2 py-1 rounded-full">+12.5%</span>
                 </div>
                 <p className="text-text-sub-light dark:text-text-sub-dark text-sm font-medium">Total Revenue</p>
-                <h3 className="text-2xl font-bold text-text-main-light dark:text-text-main-dark mt-1">${(totalRevenue / 1000).toFixed(1)}K</h3>
+                <h3 className="text-2xl font-bold text-text-main-light dark:text-text-main-dark mt-1">₹{(totalRevenue / 1000).toLocaleString('en-IN', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}K</h3>
               </div>
 
               <div className="bg-surface-light dark:bg-surface-dark rounded-xl p-5 shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)] border border-slate-100 dark:border-slate-800 hover:border-primary/30 transition-colors">
@@ -128,7 +130,7 @@ export default function ReportsClient() {
                   <span className="flex items-center text-xs font-bold text-warning bg-warning/10 px-2 py-1 rounded-full">Avg</span>
                 </div>
                 <p className="text-text-sub-light dark:text-text-sub-dark text-sm font-medium">Avg Daily Rate</p>
-                <h3 className="text-2xl font-bold text-text-main-light dark:text-text-main-dark mt-1">${avgDailyRate}</h3>
+                <h3 className="text-2xl font-bold text-text-main-light dark:text-text-main-dark mt-1">₹{avgDailyRate}</h3>
               </div>
 
               <div className="bg-surface-light dark:bg-surface-dark rounded-xl p-5 shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)] border border-slate-100 dark:border-slate-800 hover:border-primary/30 transition-colors">
@@ -156,7 +158,7 @@ export default function ReportsClient() {
                     <div key={idx} className="space-y-2">
                       <div className="flex justify-between items-center">
                         <span className="text-sm font-medium text-text-main-light dark:text-text-main-dark">{data.month}</span>
-                        <span className="text-sm font-bold text-primary">${data.total.toLocaleString()}</span>
+                        <span className="text-sm font-bold text-primary">₹{formatInr(data.total)}</span>
                       </div>
                       <div className="flex gap-1 h-8 rounded-lg overflow-hidden bg-slate-100 dark:bg-slate-800">
                         <div 
@@ -171,8 +173,8 @@ export default function ReportsClient() {
                         />
                       </div>
                       <div className="flex gap-4 text-xs text-text-sub-light dark:text-text-sub-dark">
-                        <span>Room: ${data.roomRevenue.toLocaleString()}</span>
-                        <span>Incidentals: ${data.incidentals.toLocaleString()}</span>
+                        <span>Room: ₹{formatInr(data.roomRevenue)}</span>
+                        <span>Incidentals: ₹{formatInr(data.incidentals)}</span>
                       </div>
                     </div>
                   ))}
@@ -189,7 +191,7 @@ export default function ReportsClient() {
                     </div>
                     <div className="flex-1">
                       <p className="text-sm font-semibold text-text-main-light dark:text-text-main-dark">Paid</p>
-                      <p className="text-xs text-text-sub-light dark:text-text-sub-dark">${corporateClients.filter(c => c.paymentStatus === 'paid').reduce((s, c) => s + c.totalSpent, 0).toLocaleString()}</p>
+                      <p className="text-xs text-text-sub-light dark:text-text-sub-dark">₹{formatInr(corporateClients.filter(c => c.paymentStatus === 'paid').reduce((s, c) => s + c.totalSpent, 0))}</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
@@ -198,7 +200,7 @@ export default function ReportsClient() {
                     </div>
                     <div className="flex-1">
                       <p className="text-sm font-semibold text-text-main-light dark:text-text-main-dark">Pending</p>
-                      <p className="text-xs text-text-sub-light dark:text-text-sub-dark">${corporateClients.filter(c => c.paymentStatus === 'pending').reduce((s, c) => s + c.totalSpent, 0).toLocaleString()}</p>
+                      <p className="text-xs text-text-sub-light dark:text-text-sub-dark">₹{formatInr(corporateClients.filter(c => c.paymentStatus === 'pending').reduce((s, c) => s + c.totalSpent, 0))}</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
@@ -207,7 +209,7 @@ export default function ReportsClient() {
                     </div>
                     <div className="flex-1">
                       <p className="text-sm font-semibold text-text-main-light dark:text-text-main-dark">Overdue</p>
-                      <p className="text-xs text-text-sub-light dark:text-text-sub-dark">${overduAmount.toLocaleString()}</p>
+                      <p className="text-xs text-text-sub-light dark:text-text-sub-dark">₹{formatInr(overduAmount)}</p>
                     </div>
                   </div>
                 </div>
@@ -246,8 +248,8 @@ export default function ReportsClient() {
                           </div>
                         </td>
                         <td className="px-6 py-4 text-sm text-text-main-light dark:text-text-main-dark">{room.nights}</td>
-                        <td className="px-6 py-4 text-sm font-semibold text-text-main-light dark:text-text-main-dark">${room.avgDailyRate}</td>
-                        <td className="px-6 py-4 text-sm font-bold text-primary text-right">${room.revenue.toLocaleString()}</td>
+                        <td className="px-6 py-4 text-sm font-semibold text-text-main-light dark:text-text-main-dark">₹{room.avgDailyRate}</td>
+                        <td className="px-6 py-4 text-sm font-bold text-primary text-right">₹{formatInr(room.revenue)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -281,8 +283,8 @@ export default function ReportsClient() {
                         <td className="px-6 py-4 text-sm font-medium text-text-main-light dark:text-text-main-dark">{client.name}</td>
                         <td className="px-6 py-4 text-sm text-text-main-light dark:text-text-main-dark">{client.totalBookings}</td>
                         <td className="px-6 py-4 text-sm text-text-main-light dark:text-text-main-dark">{client.occupiedNights}</td>
-                        <td className="px-6 py-4 text-sm font-semibold text-text-main-light dark:text-text-main-dark">${client.avgBookingValue.toLocaleString()}</td>
-                        <td className="px-6 py-4 text-sm font-bold text-primary">${client.totalSpent.toLocaleString()}</td>
+                        <td className="px-6 py-4 text-sm font-semibold text-text-main-light dark:text-text-main-dark">₹{formatInr(client.avgBookingValue)}</td>
+                        <td className="px-6 py-4 text-sm font-bold text-primary">₹{formatInr(client.totalSpent)}</td>
                         <td className="px-6 py-4 text-sm">
                           <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ${
                             client.paymentStatus === 'paid' 
@@ -312,7 +314,7 @@ export default function ReportsClient() {
                   <span className="material-symbols-outlined text-2xl text-blue-600 dark:text-blue-400">star</span>
                 </div>
                 <p className="text-lg font-bold text-blue-900 dark:text-blue-300">Presidential Suite</p>
-                <p className="text-sm text-blue-700 dark:text-blue-400 mt-2">92% occupancy | $108K revenue | $520 ADR</p>
+                <p className="text-sm text-blue-700 dark:text-blue-400 mt-2">92% occupancy | ₹108K revenue | ₹520 ADR</p>
               </div>
 
               <div className="bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-900/20 dark:to-purple-800/20 rounded-xl p-6 border border-purple-200 dark:border-purple-900/50">
@@ -321,7 +323,7 @@ export default function ReportsClient() {
                   <span className="material-symbols-outlined text-2xl text-purple-600 dark:text-purple-400">trending_up</span>
                 </div>
                 <p className="text-lg font-bold text-purple-900 dark:text-purple-300">Global Finance Ltd</p>
-                <p className="text-sm text-purple-700 dark:text-purple-400 mt-2">32 bookings | $125.6K spent | 267 nights</p>
+                <p className="text-sm text-purple-700 dark:text-purple-400 mt-2">32 bookings | ₹125.6K spent | 267 nights</p>
               </div>
 
               <div className="bg-gradient-to-br from-amber-50 to-amber-100 dark:from-amber-900/20 dark:to-amber-800/20 rounded-xl p-6 border border-amber-200 dark:border-amber-900/50">
@@ -330,7 +332,7 @@ export default function ReportsClient() {
                   <span className="material-symbols-outlined text-2xl text-amber-600 dark:text-amber-400">warning</span>
                 </div>
                 <p className="text-lg font-bold text-amber-900 dark:text-amber-300">Overdue Invoices</p>
-                <p className="text-sm text-amber-700 dark:text-amber-400 mt-2">${overduAmount.toLocaleString()} from Digital Transformations Co</p>
+                <p className="text-sm text-amber-700 dark:text-amber-400 mt-2">₹{formatInr(overduAmount)} from Digital Transformations Co</p>
               </div>
             </div>
           </div>

@@ -47,6 +47,8 @@ const SERVICE_TYPES = [
   'Miscellaneous',
 ]
 
+const formatInr = (value: number) => value.toLocaleString('en-IN')
+
 export default function AttachBillsClient({ bookingId }: { bookingId: string }) {
   const router = useRouter()
   const [booking, setBooking] = useState<BookingRecord | null>(null)
@@ -298,9 +300,9 @@ export default function AttachBillsClient({ bookingId }: { bookingId: string }) 
                   </div>
                   <div className="text-right">
                     <p className="text-blue-200 text-sm">Contract Base Amount</p>
-                    <p className="text-2xl font-extrabold">₹{booking.totalPrice.toLocaleString()}</p>
-                    <p className="text-blue-200 text-sm mt-1">Extra Bills: ₹{extraBillsTotal.toLocaleString()}</p>
-                    <p className="text-white text-lg font-bold mt-1">Updated Total: ₹{updatedInvoiceTotal.toLocaleString()}</p>
+                    <p className="text-2xl font-extrabold">₹{formatInr(booking.totalPrice)}</p>
+                    <p className="text-blue-200 text-sm mt-1">Extra Bills: ₹{formatInr(extraBillsTotal)}</p>
+                    <p className="text-white text-lg font-bold mt-1">Updated Total: ₹{formatInr(updatedInvoiceTotal)}</p>
                     <p className="text-blue-200 text-sm mt-1">
                       Check-in: {new Date(booking.checkInDate).toLocaleDateString('en-IN')}
                     </p>
@@ -372,7 +374,7 @@ export default function AttachBillsClient({ bookingId }: { bookingId: string }) 
                             </div>
                             <div>
                               <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-2">
-                                Amount ($)
+                                Amount (₹)
                               </label>
                               <input
                                 type="number"

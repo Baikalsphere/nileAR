@@ -196,9 +196,9 @@ export default function SettingsClient() {
 
   if (isLoading) {
     return (
-      <div className="flex h-screen bg-background-light dark:bg-background-dark text-[#0d121b] dark:text-white">
+      <div className="flex h-screen bg-background-light dark:bg-background-dark text-slate-900 dark:text-white">
         <Sidebar title="Corporate Portal" logoIcon="apartment" />
-        <div className="flex-1 flex items-center justify-center text-[#4c669a] dark:text-gray-400">Loading company settings...</div>
+        <div className="flex-1 flex items-center justify-center text-slate-500 dark:text-slate-400">Loading company settings...</div>
       </div>
     )
   }
@@ -208,32 +208,32 @@ export default function SettingsClient() {
     : null
 
   return (
-    <div className="flex h-screen bg-background-light dark:bg-background-dark text-[#0d121b] dark:text-white">
+    <div className="flex h-screen bg-background-light dark:bg-background-dark text-slate-900 dark:text-white overflow-hidden">
       <Sidebar title="Corporate Portal" logoIcon="apartment" />
       <div className="flex-1 flex flex-col overflow-hidden">
         <Header />
         <main className="flex-1 overflow-y-auto">
-          <div className="py-8 px-4 sm:px-8 lg:px-40">
+          <div className="p-4 md:p-6 lg:p-8">
             <div className="mx-auto w-full max-w-7xl flex flex-col gap-6">
-              <nav className="flex items-center gap-2 text-sm text-[#4c669a] dark:text-gray-400">
+              <nav className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
                 <a href="/corporate-portal" className="hover:text-primary transition-colors">
                   Home
                 </a>
                 <span className="material-symbols-outlined icon-sm">chevron_right</span>
-                <span className="font-medium text-[#0d121b] dark:text-white">Settings</span>
+                <span className="font-medium text-slate-900 dark:text-white">Settings</span>
               </nav>
 
-              <div className="flex flex-wrap justify-between gap-4 mb-2">
+              <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
                 <div>
-                  <h1 className="text-3xl sm:text-4xl font-black leading-tight tracking-tight text-[#0d121b] dark:text-white">
+                  <h1 className="text-3xl sm:text-4xl font-extrabold leading-tight tracking-tight text-slate-900 dark:text-white">
                     Settings & Preferences
                   </h1>
-                  <p className="mt-2 text-base text-[#4c669a] dark:text-gray-400 max-w-2xl">
+                  <p className="mt-2 text-base text-slate-500 dark:text-slate-400 max-w-3xl">
                     Manage your company details, authorized payers, billing information, and notification settings for your corporate account.
                   </p>
                 </div>
-                <div className="flex items-end">
-                  <button className="bg-white dark:bg-[#1C2636] text-[#0d121b] dark:text-white border border-[#e7ebf3] dark:border-[#2d3748] px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors flex items-center gap-2">
+                <div className="flex md:justify-end">
+                  <button className="bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-700 px-4 py-2.5 rounded-lg text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors flex items-center gap-2">
                     <span className="material-symbols-outlined icon-sm">help</span>
                     Support
                   </button>
@@ -252,16 +252,16 @@ export default function SettingsClient() {
                 </div>
               )}
 
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-                <aside className="lg:col-span-3 sticky top-24">
-                  <div className="bg-white dark:bg-[#1C2636] rounded-xl border border-[#e7ebf3] dark:border-[#2d3748] shadow-sm overflow-hidden">
-                    <div className="p-4 border-b border-[#e7ebf3] dark:border-[#2d3748] flex items-center gap-3">
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                <aside className="lg:col-span-3 lg:sticky lg:top-24">
+                  <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden">
+                    <div className="p-4 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
                       <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
                         <span className="material-symbols-outlined text-primary">apartment</span>
                       </div>
                       <div>
-                        <p className="text-sm font-bold text-[#0d121b] dark:text-white">{companyForm.name || "Company"}</p>
-                        <p className="text-xs text-[#4c669a] dark:text-gray-400">Enterprise Account</p>
+                        <p className="text-sm font-bold text-slate-900 dark:text-white">{companyForm.name || "Company"}</p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">Enterprise Account</p>
                       </div>
                     </div>
                     <nav className="flex flex-col p-2 gap-1">
@@ -270,7 +270,7 @@ export default function SettingsClient() {
                         className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
                           activeTab === "company-details"
                             ? "bg-primary/10 text-primary font-medium"
-                            : "text-[#4c669a] dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 hover:text-[#0d121b] dark:hover:text-white"
+                            : "text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white"
                         }`}
                       >
                         <span className="material-symbols-outlined icon-sm fill">business</span>
@@ -281,7 +281,7 @@ export default function SettingsClient() {
                         className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
                           activeTab === "authorized-payers"
                             ? "bg-primary/10 text-primary font-medium"
-                            : "text-[#4c669a] dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 hover:text-[#0d121b] dark:hover:text-white"
+                            : "text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white"
                         }`}
                       >
                         <span className="material-symbols-outlined icon-sm">group</span>
@@ -292,7 +292,7 @@ export default function SettingsClient() {
                         className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
                           activeTab === "billing-tax"
                             ? "bg-primary/10 text-primary font-medium"
-                            : "text-[#4c669a] dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 hover:text-[#0d121b] dark:hover:text-white"
+                            : "text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white"
                         }`}
                       >
                         <span className="material-symbols-outlined icon-sm">credit_card</span>
@@ -303,7 +303,7 @@ export default function SettingsClient() {
                         className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
                           activeTab === "notifications"
                             ? "bg-primary/10 text-primary font-medium"
-                            : "text-[#4c669a] dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 hover:text-[#0d121b] dark:hover:text-white"
+                            : "text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white"
                         }`}
                       >
                         <span className="material-symbols-outlined icon-sm">notifications</span>
@@ -314,36 +314,35 @@ export default function SettingsClient() {
                 </aside>
 
                 <main className="lg:col-span-9 flex flex-col gap-6">
-                  <div className="bg-white dark:bg-[#1C2636] rounded-xl border border-[#e7ebf3] dark:border-[#2d3748] p-6 shadow-sm flex flex-col sm:flex-row gap-6 items-center sm:items-start">
-                    <div className="h-24 w-24 sm:h-28 sm:w-28 flex-shrink-0 rounded-xl bg-primary/10 border border-[#e7ebf3] dark:border-[#2d3748] flex items-center justify-center">
+                  <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6 shadow-sm flex flex-col sm:flex-row gap-5 items-start">
+                    <div className="h-20 w-20 sm:h-24 sm:w-24 flex-shrink-0 rounded-xl bg-primary/10 border border-slate-200 dark:border-slate-700 flex items-center justify-center">
                       <span className="material-symbols-outlined text-primary text-4xl">apartment</span>
                     </div>
-                    <div className="flex-1 text-center sm:text-left">
-                      <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
-                        <div>
-                          <h2 className="text-2xl font-bold text-[#0d121b] dark:text-white mb-1">{companyForm.name || "Company"}</h2>
-                          <p className="text-[#4c669a] dark:text-gray-400 text-sm mb-4">
-                            Contact email: <span className="font-medium text-[#0d121b] dark:text-gray-300">{companyForm.contactEmail || "Not set"}</span>
-                          </p>
-                          <p className="text-[#4c669a] dark:text-gray-400 text-sm mb-4">
-                            Registration: <span className="font-medium text-[#0d121b] dark:text-gray-300">{companyForm.registrationNumber || "Not set"}</span>
-                            {" • "}
-                            Phone: <span className="font-medium text-[#0d121b] dark:text-gray-300">{companyForm.phone || "Not set"}</span>
-                          </p>
-                          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 text-xs font-semibold border border-green-100 dark:border-green-800">
-                            <span className="w-2 h-2 rounded-full bg-green-500"></span>
-                            Active Account
-                          </div>
-                        </div>
+                    <div className="flex-1 min-w-0">
+                      <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2 truncate">{companyForm.name || "Company"}</h2>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                        <p className="text-slate-500 dark:text-slate-400">
+                          Contact email: <span className="font-medium text-slate-900 dark:text-slate-200">{companyForm.contactEmail || "Not set"}</span>
+                        </p>
+                        <p className="text-slate-500 dark:text-slate-400">
+                          Registration: <span className="font-medium text-slate-900 dark:text-slate-200">{companyForm.registrationNumber || "Not set"}</span>
+                        </p>
+                        <p className="text-slate-500 dark:text-slate-400 md:col-span-2">
+                          Phone: <span className="font-medium text-slate-900 dark:text-slate-200">{companyForm.phone || "Not set"}</span>
+                        </p>
+                      </div>
+                      <div className="mt-4 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 text-xs font-semibold border border-green-100 dark:border-green-800">
+                        <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                        Active Account
                       </div>
                     </div>
                   </div>
 
                   {activeTab === "company-details" && (
-                    <section className="bg-white dark:bg-[#1C2636] rounded-xl border border-[#e7ebf3] dark:border-[#2d3748] shadow-sm">
+                    <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
                       <form onSubmit={handleSaveCompany}>
-                        <div className="p-6 border-b border-[#e7ebf3] dark:border-[#2d3748] flex justify-between items-center">
-                          <h3 className="text-lg font-bold text-[#0d121b] dark:text-white">Company Information</h3>
+                        <div className="p-6 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center">
+                          <h3 className="text-lg font-bold text-slate-900 dark:text-white">Company Information</h3>
                           <button
                             type="submit"
                             disabled={isSavingProfile}
@@ -354,54 +353,54 @@ export default function SettingsClient() {
                         </div>
                         <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
                           <div className="space-y-2">
-                            <label className="text-sm font-medium text-[#0d121b] dark:text-gray-300">Company Name</label>
+                            <label className="text-sm font-medium text-slate-900 dark:text-slate-300">Company Name</label>
                             <input
                               type="text"
                               value={companyForm.name}
                               onChange={(e) => updateCompanyField("name", e.target.value)}
                               required
-                              className="w-full rounded-lg border border-[#e7ebf3] dark:border-[#2d3748] bg-[#f8f9fc] dark:bg-[#101622] px-3 py-2.5 text-sm text-[#0d121b] dark:text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
+                              className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-3 py-2.5 text-sm text-slate-900 dark:text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
                             />
                           </div>
                           <div className="space-y-2">
-                            <label className="text-sm font-medium text-[#0d121b] dark:text-gray-300">Registration Number</label>
+                            <label className="text-sm font-medium text-slate-900 dark:text-slate-300">Registration Number</label>
                             <input
                               type="text"
                               value={companyForm.registrationNumber}
                               onChange={(e) => updateCompanyField("registrationNumber", e.target.value)}
-                              className="w-full rounded-lg border border-[#e7ebf3] dark:border-[#2d3748] bg-[#f8f9fc] dark:bg-[#101622] px-3 py-2.5 text-sm text-[#0d121b] dark:text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
+                              className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-3 py-2.5 text-sm text-slate-900 dark:text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
                             />
                           </div>
                           <div className="space-y-2 md:col-span-2">
-                            <label className="text-sm font-medium text-[#0d121b] dark:text-gray-300">Registered Address</label>
+                            <label className="text-sm font-medium text-slate-900 dark:text-slate-300">Registered Address</label>
                             <input
                               type="text"
                               value={companyForm.address}
                               onChange={(e) => updateCompanyField("address", e.target.value)}
-                              className="w-full rounded-lg border border-[#e7ebf3] dark:border-[#2d3748] bg-[#f8f9fc] dark:bg-[#101622] px-3 py-2.5 text-sm text-[#0d121b] dark:text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
+                              className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-3 py-2.5 text-sm text-slate-900 dark:text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
                             />
                           </div>
                           <div className="space-y-2">
-                            <label className="text-sm font-medium text-[#0d121b] dark:text-gray-300">Contact Email</label>
+                            <label className="text-sm font-medium text-slate-900 dark:text-slate-300">Contact Email</label>
                             <div className="relative">
                               <span className="material-symbols-outlined absolute left-3 top-2.5 text-gray-400 icon-sm">mail</span>
                               <input
                                 type="email"
                                 value={companyForm.contactEmail}
                                 onChange={(e) => updateCompanyField("contactEmail", e.target.value)}
-                                className="w-full pl-10 rounded-lg border border-[#e7ebf3] dark:border-[#2d3748] bg-[#f8f9fc] dark:bg-[#101622] px-3 py-2.5 text-sm text-[#0d121b] dark:text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
+                                className="w-full pl-10 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-3 py-2.5 text-sm text-slate-900 dark:text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
                               />
                             </div>
                           </div>
                           <div className="space-y-2">
-                            <label className="text-sm font-medium text-[#0d121b] dark:text-gray-300">Phone Number</label>
+                            <label className="text-sm font-medium text-slate-900 dark:text-slate-300">Phone Number</label>
                             <div className="relative">
                               <span className="material-symbols-outlined absolute left-3 top-2.5 text-gray-400 icon-sm">call</span>
                               <input
                                 type="tel"
                                 value={companyForm.phone}
                                 onChange={(e) => updateCompanyField("phone", e.target.value)}
-                                className="w-full pl-10 rounded-lg border border-[#e7ebf3] dark:border-[#2d3748] bg-[#f8f9fc] dark:bg-[#101622] px-3 py-2.5 text-sm text-[#0d121b] dark:text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
+                                className="w-full pl-10 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-3 py-2.5 text-sm text-slate-900 dark:text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
                               />
                             </div>
                           </div>
@@ -422,9 +421,9 @@ export default function SettingsClient() {
 
                       {mustSetPassword && (
                         <div className="px-6 pb-6">
-                          <div className="rounded-xl border border-[#e7ebf3] dark:border-[#2d3748] p-4">
-                            <h4 className="text-sm font-bold text-[#0d121b] dark:text-white">Set Your Password</h4>
-                            <p className="text-xs text-[#4c669a] dark:text-gray-400 mt-1">Set your own password now. After this, you can login with your contact email.</p>
+                          <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-4">
+                            <h4 className="text-sm font-bold text-slate-900 dark:text-white">Set Your Password</h4>
+                            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Set your own password now. After this, you can login with your contact email.</p>
 
                             <form className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4" onSubmit={handleSetPassword}>
                               <input
@@ -434,7 +433,7 @@ export default function SettingsClient() {
                                 minLength={12}
                                 required
                                 placeholder="New password"
-                                className="w-full rounded-lg border border-[#e7ebf3] dark:border-[#2d3748] bg-[#f8f9fc] dark:bg-[#101622] px-3 py-2.5 text-sm"
+                                className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-3 py-2.5 text-sm"
                               />
                               <input
                                 type="password"
@@ -443,7 +442,7 @@ export default function SettingsClient() {
                                 minLength={12}
                                 required
                                 placeholder="Confirm password"
-                                className="w-full rounded-lg border border-[#e7ebf3] dark:border-[#2d3748] bg-[#f8f9fc] dark:bg-[#101622] px-3 py-2.5 text-sm"
+                                className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-3 py-2.5 text-sm"
                               />
 
                               {passwordError && (
@@ -475,27 +474,27 @@ export default function SettingsClient() {
                   )}
 
                   {activeTab === "billing-tax" && (
-                    <section className="bg-white dark:bg-[#1C2636] rounded-xl border border-[#e7ebf3] dark:border-[#2d3748] shadow-sm">
-                      <div className="p-6 border-b border-[#e7ebf3] dark:border-[#2d3748]">
-                        <h3 className="text-lg font-bold text-[#0d121b] dark:text-white">Billing & Tax</h3>
-                        <p className="text-sm text-[#4c669a] dark:text-gray-400 mt-1">Manage your tax identification and payment methods.</p>
+                    <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
+                      <div className="p-6 border-b border-slate-200 dark:border-slate-700">
+                        <h3 className="text-lg font-bold text-slate-900 dark:text-white">Billing & Tax</h3>
+                        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Manage your tax identification and payment methods.</p>
                       </div>
                       <div className="p-6 space-y-6">
                         <div className="flex flex-col md:flex-row gap-4 items-end">
                           <div className="flex-1 space-y-2 w-full">
-                            <label className="text-sm font-medium text-[#0d121b] dark:text-gray-300">GSTIN / VAT Number</label>
+                            <label className="text-sm font-medium text-slate-900 dark:text-slate-300">GSTIN / VAT Number</label>
                             <div className="relative">
                               <input
                                 type="text"
                                 value={taxId}
                                 onChange={(e) => setTaxId(e.target.value)}
-                                className="w-full rounded-lg border border-green-500 bg-green-50 dark:bg-green-900/10 px-3 py-2.5 text-sm text-[#0d121b] dark:text-white focus:outline-none transition-all"
+                                className="w-full rounded-lg border border-green-500 bg-green-50 dark:bg-green-900/10 px-3 py-2.5 text-sm text-slate-900 dark:text-white focus:outline-none transition-all"
                               />
                               <span className="material-symbols-outlined absolute right-3 top-2.5 text-green-600 icon-sm">check_circle</span>
                             </div>
                             <p className="text-xs text-green-600 font-medium">Verified Tax ID</p>
                           </div>
-                          <button className="h-[42px] px-4 rounded-lg border border-[#e7ebf3] dark:border-[#2d3748] text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
+                          <button className="h-[42px] px-4 rounded-lg border border-slate-200 dark:border-slate-700 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
                             Request Update
                           </button>
                         </div>
@@ -504,11 +503,11 @@ export default function SettingsClient() {
                   )}
 
                   {activeTab === "authorized-payers" && (
-                    <section className="bg-white dark:bg-[#1C2636] rounded-xl border border-[#e7ebf3] dark:border-[#2d3748] shadow-sm">
-                      <div className="p-6 border-b border-[#e7ebf3] dark:border-[#2d3748] flex flex-wrap gap-4 justify-between items-center">
+                    <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
+                      <div className="p-6 border-b border-slate-200 dark:border-slate-700 flex flex-wrap gap-4 justify-between items-center">
                         <div>
-                          <h3 className="text-lg font-bold text-[#0d121b] dark:text-white">Authorized Payers</h3>
-                          <p className="text-sm text-[#4c669a] dark:text-gray-400 mt-1">Personnel authorized to book stays and process invoices.</p>
+                          <h3 className="text-lg font-bold text-slate-900 dark:text-white">Authorized Payers</h3>
+                          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Personnel authorized to book stays and process invoices.</p>
                         </div>
                         <button className="bg-primary text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors flex items-center gap-2 shadow-lg shadow-primary/20">
                           <span className="material-symbols-outlined icon-sm">person_add</span>
@@ -518,7 +517,7 @@ export default function SettingsClient() {
                       <div className="overflow-x-auto">
                         <table className="w-full text-left border-collapse">
                           <thead>
-                            <tr className="bg-[#f8f9fc] dark:bg-[#101622] text-[#4c669a] dark:text-gray-400 text-xs uppercase tracking-wider font-semibold border-b border-[#e7ebf3] dark:border-[#2d3748]">
+                            <tr className="bg-slate-50 dark:bg-slate-900 text-slate-500 dark:text-slate-400 text-xs uppercase tracking-wider font-semibold border-b border-slate-200 dark:border-slate-700">
                               <th className="p-4">Name</th>
                               <th className="p-4">Role</th>
                               <th className="p-4">Email</th>
@@ -526,12 +525,12 @@ export default function SettingsClient() {
                               <th className="p-4 text-right">Actions</th>
                             </tr>
                           </thead>
-                          <tbody className="divide-y divide-[#e7ebf3] dark:divide-[#2d3748] text-sm">
+                          <tbody className="divide-y divide-slate-200 dark:divide-slate-700 text-sm">
                             {authorizedPayers.map((payer) => (
-                              <tr key={payer.id} className="group hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
-                                <td className="p-4 font-medium text-[#0d121b] dark:text-white">{payer.name}</td>
-                                <td className="p-4 text-[#4c669a] dark:text-gray-400">{payer.role}</td>
-                                <td className="p-4 text-[#4c669a] dark:text-gray-400">{payer.email}</td>
+                              <tr key={payer.id} className="group hover:bg-slate-50 dark:hover:bg-slate-700/40 transition-colors">
+                                <td className="p-4 font-medium text-slate-900 dark:text-white">{payer.name}</td>
+                                <td className="p-4 text-slate-500 dark:text-slate-400">{payer.role}</td>
+                                <td className="p-4 text-slate-500 dark:text-slate-400">{payer.email}</td>
                                 <td className="p-4">
                                   <span
                                     className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${
@@ -544,7 +543,7 @@ export default function SettingsClient() {
                                   </span>
                                 </td>
                                 <td className="p-4 text-right">
-                                  <button className="text-[#4c669a] hover:text-primary transition-colors">
+                                  <button className="text-slate-500 hover:text-primary transition-colors">
                                     <span className="material-symbols-outlined icon-sm">more_vert</span>
                                   </button>
                                 </td>
@@ -557,10 +556,10 @@ export default function SettingsClient() {
                   )}
 
                   {activeTab === "notifications" && (
-                    <section className="bg-white dark:bg-[#1C2636] rounded-xl border border-[#e7ebf3] dark:border-[#2d3748] shadow-sm mb-10">
-                      <div className="p-6 border-b border-[#e7ebf3] dark:border-[#2d3748]">
-                        <h3 className="text-lg font-bold text-[#0d121b] dark:text-white">Notification Preferences</h3>
-                        <p className="text-sm text-[#4c669a] dark:text-gray-400 mt-1">Choose how and when you want to be notified.</p>
+                    <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm mb-10">
+                      <div className="p-6 border-b border-slate-200 dark:border-slate-700">
+                        <h3 className="text-lg font-bold text-slate-900 dark:text-white">Notification Preferences</h3>
+                        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Choose how and when you want to be notified.</p>
                       </div>
                       <div className="p-6 flex flex-col gap-6">
                         <div className="flex items-center justify-between">
@@ -569,8 +568,8 @@ export default function SettingsClient() {
                               <span className="material-symbols-outlined icon-sm">receipt_long</span>
                             </div>
                             <div>
-                              <p className="text-sm font-semibold text-[#0d121b] dark:text-white">New Invoice Generated</p>
-                              <p className="text-xs text-[#4c669a] dark:text-gray-400">Receive an email when a new invoice is ready for payment.</p>
+                              <p className="text-sm font-semibold text-slate-900 dark:text-white">New Invoice Generated</p>
+                              <p className="text-xs text-slate-500 dark:text-slate-400">Receive an email when a new invoice is ready for payment.</p>
                             </div>
                           </div>
                           <label className="relative inline-flex items-center cursor-pointer">
@@ -584,7 +583,7 @@ export default function SettingsClient() {
                           </label>
                         </div>
 
-                        <hr className="border-[#e7ebf3] dark:border-[#2d3748]" />
+                        <hr className="border-slate-200 dark:border-slate-700" />
 
                         <div className="flex items-center justify-between">
                           <div className="flex gap-4">
@@ -592,8 +591,8 @@ export default function SettingsClient() {
                               <span className="material-symbols-outlined icon-sm">event_upcoming</span>
                             </div>
                             <div>
-                              <p className="text-sm font-semibold text-[#0d121b] dark:text-white">Payment Due Reminders</p>
-                              <p className="text-xs text-[#4c669a] dark:text-gray-400">Get reminded 3 days before an invoice is due.</p>
+                              <p className="text-sm font-semibold text-slate-900 dark:text-white">Payment Due Reminders</p>
+                              <p className="text-xs text-slate-500 dark:text-slate-400">Get reminded 3 days before an invoice is due.</p>
                             </div>
                           </div>
                           <label className="relative inline-flex items-center cursor-pointer">

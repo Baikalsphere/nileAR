@@ -34,15 +34,46 @@ const toAbsoluteApiUrl = (value?: string | null) => {
     return null;
   }
 
+  const resolveLocalDevHostname = (url: string) => {
+    if (typeof window === "undefined") {
+      return url;
+    }
+
+    try {
+      const parsed = new URL(url);
+      const isLocalApiHost = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1";
+      const browserHost = window.location.hostname;
+      const isLocalBrowserHost = browserHost === "localhost" || browserHost === "127.0.0.1";
+
+      if (isLocalApiHost && isLocalBrowserHost && parsed.hostname !== browserHost) {
+        parsed.hostname = browserHost;
+        return parsed.toString();
+      }
+
+      return url;
+    } catch {
+      return url;
+    }
+  };
+
+  const withLogoCacheBuster = (url: string) => {
+    if (!url.includes("/api/auth/hotel/logo/")) {
+      return resolveLocalDevHostname(url);
+    }
+
+    const joiner = url.includes("?") ? "&" : "?";
+    return resolveLocalDevHostname(`${url}${joiner}v=${Date.now()}`);
+  };
+
   if (value.startsWith("http://") || value.startsWith("https://")) {
-    return value;
+    return withLogoCacheBuster(value);
   }
 
   if (value.startsWith("/")) {
-    return `${apiBaseUrl}${value}`;
+    return withLogoCacheBuster(`${apiBaseUrl}${value}`);
   }
 
-  return value;
+  return withLogoCacheBuster(value);
 };
 
 const parseErrorMessage = async (response: Response) => {

@@ -28,6 +28,7 @@ export default function Sidebar({ title, logoIcon }: SidebarProps) {
   const hotelReportsHref = isHotelFinance ? '/hotel-finance/reports' : '#'
   const hotelProfileHref = isHotelFinance ? '/hotel-finance/profile' : '#'
   const employeeStaysHref = isCorporatePortal ? '/corporate-portal/employee-stays' : '#'
+  const corporateBookingRequestsHref = isCorporatePortal ? '/corporate-portal/booking-requests' : '#'
   const employeesHref = isCorporatePortal ? '/corporate-portal/employees' : '#'
   const reportsHref = isCorporatePortal ? '/corporate-portal/reports' : '#'
   const settingsHref = isCorporatePortal ? '/corporate-portal/settings' : '#'
@@ -36,10 +37,11 @@ export default function Sidebar({ title, logoIcon }: SidebarProps) {
   const isDashboardActive = pathname === dashboardHref
   const isInvoicesActive = pathname === invoicesHref
   const isOrganizationsActive = pathname === organizationsHref
-  const isBookingsActive = pathname === bookingsHref
+  const isBookingsActive = pathname.startsWith('/hotel-finance/bookings')
   const isHotelReportsActive = pathname === hotelReportsHref
   const isHotelProfileActive = pathname === hotelProfileHref
   const isEmployeeStaysActive = pathname === employeeStaysHref
+  const isCorporateBookingRequestsActive = pathname.startsWith('/corporate-portal/booking-requests')
   const isEmployeesActive = pathname === employeesHref
   const isReportsActive = pathname === reportsHref
   const isSettingsActive = pathname === settingsHref
@@ -171,6 +173,26 @@ export default function Sidebar({ title, logoIcon }: SidebarProps) {
               {isCollapsed && showTooltip === 'employee-stays' && (
                 <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2 px-3 py-2 bg-slate-800 text-white text-xs rounded-lg whitespace-nowrap z-50 shadow-lg animate-in fade-in slide-in-from-left-1 duration-200">
                   Employee Stays
+                </div>
+              )}
+            </div>
+            <div
+              className="relative"
+              onMouseEnter={() => isCollapsed && setShowTooltip('book-rooms')}
+              onMouseLeave={() => setShowTooltip(null)}
+            >
+              <Link className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-300 group/link ${isCorporateBookingRequestsActive ? 'bg-primary/10 text-primary hover:shadow-md hover:shadow-primary/20' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:translate-x-1'} ${isCollapsed ? 'justify-center' : ''}`} href={corporateBookingRequestsHref}>
+                <span className={`material-symbols-outlined text-[22px] transition-transform duration-300 ${isCollapsed ? 'group-hover/link:scale-125' : ''}`}>add_business</span>
+                <p className={`text-sm font-medium transition-all duration-500 ${isCollapsed ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100 delay-75'}`}>Book Rooms</p>
+                {!isCollapsed && (
+                  <span className={`material-symbols-outlined text-[16px] ml-auto opacity-0 -translate-x-2 transition-all duration-300 ${isCorporateBookingRequestsActive ? 'group-hover/link:opacity-100 group-hover/link:translate-x-0' : 'group-hover/link:opacity-100 group-hover/link:translate-x-0'}`}>
+                    arrow_forward
+                  </span>
+                )}
+              </Link>
+              {isCollapsed && showTooltip === 'book-rooms' && (
+                <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2 px-3 py-2 bg-slate-800 text-white text-xs rounded-lg whitespace-nowrap z-50 shadow-lg animate-in fade-in slide-in-from-left-1 duration-200">
+                  Book Rooms
                 </div>
               )}
             </div>

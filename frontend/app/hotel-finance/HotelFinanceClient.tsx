@@ -2,7 +2,7 @@
 
 import Header from '@/app/components/Header'
 import Sidebar from '@/app/components/Sidebar'
-import { tokenStorage } from '@/lib/auth'
+import { fetchHotelProfile, tokenStorage } from '@/lib/auth'
 import { fetchHotelFinanceDashboardSummary, HotelFinanceDashboardResponse } from '@/lib/bookingsApi'
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
@@ -12,6 +12,9 @@ export default function HotelFinanceClient() {
   const [dashboardData, setDashboardData] = useState<HotelFinanceDashboardResponse | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [hotelName, setHotelName] = useState<string>('Hotel Finance')
+  const [hotelLogoUrl, setHotelLogoUrl] = useState<string | null>(null)
+  const [isHotelLogoFailed, setIsHotelLogoFailed] = useState(false)
 
   useEffect(() => {
     const token = tokenStorage.get()
@@ -24,8 +27,15 @@ export default function HotelFinanceClient() {
       setIsLoading(true)
       setError(null)
       try {
-        const response = await fetchHotelFinanceDashboardSummary()
-        setDashboardData(response)
+        const [dashboardResponse, profileResponse] = await Promise.all([
+          fetchHotelFinanceDashboardSummary(),
+          fetchHotelProfile()
+        ])
+
+        setDashboardData(dashboardResponse)
+        setHotelName(profileResponse.profile.hotelName || 'Hotel Finance')
+        setHotelLogoUrl(profileResponse.profile.logoUrl)
+        setIsHotelLogoFailed(false)
       } catch (loadError) {
         const message = loadError instanceof Error ? loadError.message : 'Failed to load dashboard'
         setError(message)
@@ -135,6 +145,24 @@ export default function HotelFinanceClient() {
           <div className="mx-auto max-w-7xl flex flex-col gap-6">
             {/* Page Heading */}
             <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+              <div className="flex items-start gap-3">
+                {hotelLogoUrl && !isHotelLogoFailed ? (
+                  <img
+                    src={hotelLogoUrl}
+                    alt={hotelName}
+                    onError={() => setIsHotelLogoFailed(true)}
+                    className="size-12 rounded-xl object-cover border border-slate-200 dark:border-slate-700"
+                  />
+                ) : (
+                  <div className="size-12 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-bold border border-primary/20">
+                    {hotelName.slice(0, 1).toUpperCase()}
+                  </div>
+                )}
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Hotel</p>
+                  <p className="text-sm font-bold text-text-main-light dark:text-text-main-dark">{hotelName}</p>
+                </div>
+              </div>
               <div>
                 <h2 className="text-3xl font-extrabold tracking-tight text-text-main-light dark:text-text-main-dark">Financial Overview</h2>
                 <p className="text-text-sub-light dark:text-text-sub-dark mt-1">Real-time corporate billing status &amp; performance</p>

@@ -170,7 +170,7 @@ export default function DocumentUploadModal({
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-2">
-                    Amount ($) <span className="text-red-500">*</span>
+                    Amount (₹) <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="number"
@@ -293,7 +293,7 @@ export default function DocumentUploadModal({
               <div className="text-xs text-slate-700 dark:text-slate-300">
                 <p className="font-semibold text-slate-900 dark:text-white mb-1">Corporate Policy</p>
                 <p>
-                  Receipts are required for all incidental charges over $25.00. Ensure files are attached and clearly labeled.
+                  Receipts are required for all incidental charges over ₹25.00. Ensure files are attached and clearly labeled.
                 </p>
               </div>
             </div>

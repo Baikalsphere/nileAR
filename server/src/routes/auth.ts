@@ -703,16 +703,8 @@ router.get("/hotel/logo/:hotelUserId/file", async (req, res, next) => {
     }
 
     const signedUrl = await createBillSignedUrl(objectPath, 60);
-    const cloudResponse = await fetch(signedUrl);
-    if (!cloudResponse.ok) {
-      return res.status(404).json({ error: { message: "Hotel logo not found on cloud storage" } });
-    }
-
-    const contentType = cloudResponse.headers.get("content-type") || "application/octet-stream";
-    const buffer = Buffer.from(await cloudResponse.arrayBuffer());
-    res.setHeader("Content-Type", contentType);
-    res.setHeader("Cache-Control", "private, max-age=60");
-    return res.send(buffer);
+    res.setHeader("Cache-Control", "no-store, max-age=0");
+    return res.redirect(302, signedUrl);
   } catch (error) {
     return next(error);
   }
@@ -1517,6 +1509,74 @@ router.post("/corporate/booking-requests", async (req, res, next) => {
     if (error?.code === "23505") {
       return res.status(409).json({ error: { message: "Booking number already exists for this hotel" } });
     }
+    return next(error);
+  }
+});
+
+router.get("/corporate/booking-requests", async (req, res, next) => {
+  try {
+    const payload = getCorporatePayload(req, res);
+    if (!payload) {
+      return;
+    }
+
+    await ensureBookingRequestsTable();
+    const status = typeof req.query.status === "string" ? req.query.status.trim().toLowerCase() : "";
+    const allowedStatuses = new Set(["pending", "accepted", "rejected"]);
+    const hasStatusFilter = allowedStatuses.has(status);
+
+    const result = await query(
+      `SELECT br.id,
+              br.booking_number,
+              br.room_type,
+              br.check_in_date,
+              br.check_out_date,
+              br.nights,
+              br.price_per_night,
+              br.total_price,
+              br.gst_applicable,
+              br.status,
+              br.rejection_reason,
+              br.requested_at,
+              br.responded_at,
+              br.booking_id,
+              br.hotel_user_id::text AS hotel_id,
+              COALESCE(hp.hotel_name, u.full_name, u.email, 'Hotel') AS hotel_name,
+              e.full_name AS employee_name,
+              e.employee_code
+       FROM booking_requests br
+       JOIN users u ON u.id = br.hotel_user_id
+       LEFT JOIN hotel_profiles hp ON hp.user_id = br.hotel_user_id
+       JOIN corporate_employees e ON e.id = br.employee_id
+       WHERE br.organization_id = $1
+         AND ($2::boolean = false OR br.status = $3)
+       ORDER BY br.requested_at DESC`,
+      [payload.sub, hasStatusFilter, status]
+    );
+
+    const requests = result.rows.map((row) => ({
+      id: row.id,
+      bookingNumber: row.booking_number,
+      hotelId: row.hotel_id,
+      hotelName: row.hotel_name,
+      employeeName: row.employee_name,
+      employeeCode: row.employee_code,
+      roomType: row.room_type,
+      checkInDate: row.check_in_date,
+      checkOutDate: row.check_out_date,
+      nights: Number(row.nights),
+      pricePerNight: Number(row.price_per_night),
+      totalPrice: Number(row.total_price),
+      gstApplicable: Boolean(row.gst_applicable),
+      status: row.status,
+      rejectionReason: row.rejection_reason,
+      requestedAt: row.requested_at,
+      respondedAt: row.responded_at,
+      bookingId: row.booking_id
+    }));
+
+    return res.status(200).json({ requests });
+  } catch (error) {
     return next(error);
   }
 });

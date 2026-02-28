@@ -162,6 +162,10 @@ export interface CorporateBookingRequestMeta {
 export interface CorporateBookingRequestRecord {
   id: string;
   bookingNumber: string;
+  hotelId?: string;
+  hotelName?: string;
+  employeeName?: string;
+  employeeCode?: string;
   roomType: string;
   checkInDate: string;
   checkOutDate: string;
@@ -525,4 +529,31 @@ export const createCorporateBookingRequest = async (payload: {
   }
 
   return (await response.json()) as { request: CorporateBookingRequestRecord };
+};
+
+export const fetchCorporateBookingRequests = async (params?: {
+  status?: "all" | "pending" | "accepted" | "rejected";
+}) => {
+  const searchParams = new URLSearchParams();
+  if (params?.status && params.status !== "all") {
+    searchParams.set("status", params.status);
+  }
+
+  const response = await fetch(
+    `${corporateApiBaseUrl}/api/auth/corporate/booking-requests${searchParams.toString() ? `?${searchParams.toString()}` : ""}`,
+    {
+      method: "GET",
+      credentials: "include",
+      headers: {
+        ...getCorporateAuthHeaders()
+      }
+    }
+  );
+
+  if (!response.ok) {
+    const message = await parseErrorMessage(response);
+    throw new Error(message);
+  }
+
+  return (await response.json()) as { requests: CorporateBookingRequestRecord[] };
 };

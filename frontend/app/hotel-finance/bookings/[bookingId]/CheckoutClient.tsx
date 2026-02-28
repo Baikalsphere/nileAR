@@ -92,6 +92,11 @@ const mockCheckoutData: CheckoutData = {
   ],
 }
 
+const formatInrAmount = (value: number) => value.toLocaleString('en-IN', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2
+})
+
 export default function CheckoutClient({ bookingId }: { bookingId: string }) {
   const [data] = useState<CheckoutData>(mockCheckoutData)
   const [incidentals, setIncidentals] = useState<IncidentalCharge[]>(data.incidentalCharges)
@@ -233,9 +238,9 @@ export default function CheckoutClient({ bookingId }: { bookingId: string }) {
                           <tr key={charge.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
                             <td className="px-6 py-4 text-sm text-text-sub-light dark:text-text-sub-dark">{charge.date}</td>
                             <td className="px-6 py-4 text-sm text-text-main-light dark:text-text-main-dark font-medium">{charge.description}</td>
-                            <td className="px-6 py-4 text-sm text-text-sub-light dark:text-text-sub-dark text-right font-mono">${charge.rate.toFixed(2)}</td>
-                            <td className="px-6 py-4 text-sm text-text-sub-light dark:text-text-sub-dark text-right font-mono">${charge.tax.toFixed(2)}</td>
-                            <td className="px-6 py-4 text-sm text-text-main-light dark:text-text-main-dark font-bold text-right font-mono">${charge.total.toFixed(2)}</td>
+                            <td className="px-6 py-4 text-sm text-text-sub-light dark:text-text-sub-dark text-right font-mono">₹{formatInrAmount(charge.rate)}</td>
+                            <td className="px-6 py-4 text-sm text-text-sub-light dark:text-text-sub-dark text-right font-mono">₹{formatInrAmount(charge.tax)}</td>
+                            <td className="px-6 py-4 text-sm text-text-main-light dark:text-text-main-dark font-bold text-right font-mono">₹{formatInrAmount(charge.total)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -244,7 +249,7 @@ export default function CheckoutClient({ bookingId }: { bookingId: string }) {
                           <td colSpan={4} className="px-6 py-3 text-sm font-bold text-text-main-light dark:text-text-main-dark text-right uppercase">
                             Subtotal Room Charges
                           </td>
-                          <td className="px-6 py-3 text-sm font-bold text-primary text-right font-mono">${roomChargesSubtotal.toFixed(2)}</td>
+                          <td className="px-6 py-3 text-sm font-bold text-primary text-right font-mono">₹{formatInrAmount(roomChargesSubtotal)}</td>
                         </tr>
                       </tfoot>
                     </table>
@@ -282,7 +287,7 @@ export default function CheckoutClient({ bookingId }: { bookingId: string }) {
                               <input className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-sm text-text-main-light dark:text-text-main-dark focus:ring-2 focus:ring-primary" type="date" value={charge.date} disabled />
                             </div>
                             <div>
-                              <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Amount ($)</label>
+                              <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Amount (₹)</label>
                               <input className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-sm text-text-main-light dark:text-text-main-dark font-mono focus:ring-2 focus:ring-primary" type="number" value={charge.amount.toFixed(2)} disabled />
                             </div>
                             <div className="sm:col-span-2">
@@ -364,7 +369,7 @@ export default function CheckoutClient({ bookingId }: { bookingId: string }) {
                               />
                             </div>
                             <div>
-                              <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Amount ($)</label>
+                              <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Amount (₹)</label>
                               <input
                                 className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-sm text-text-main-light dark:text-text-main-dark font-mono focus:ring-2 focus:ring-primary"
                                 type="number"
@@ -431,26 +436,26 @@ export default function CheckoutClient({ bookingId }: { bookingId: string }) {
                   <div className="p-6 space-y-4">
                     <div className="flex justify-between items-center text-text-sub-light dark:text-text-sub-dark text-sm">
                       <span>Room Charges ({data.nights} nights)</span>
-                      <span className="font-mono font-medium">${roomChargesSubtotal.toFixed(2)}</span>
+                      <span className="font-mono font-medium">₹{formatInrAmount(roomChargesSubtotal)}</span>
                     </div>
                     {incidentalsSubtotal > 0 && (
                       <div className="flex justify-between items-center text-text-sub-light dark:text-text-sub-dark text-sm">
                         <span>Incidentals</span>
-                        <span className="font-mono font-medium">${incidentalsSubtotal.toFixed(2)}</span>
+                        <span className="font-mono font-medium">₹{formatInrAmount(incidentalsSubtotal)}</span>
                       </div>
                     )}
                     <div className="flex justify-between items-center text-text-sub-light dark:text-text-sub-dark text-sm pb-4 border-b border-slate-200 dark:border-slate-700">
                       <span>Taxes & Fees (10%)</span>
-                      <span className="font-mono font-medium">${taxAmount.toFixed(2)}</span>
+                      <span className="font-mono font-medium">₹{formatInrAmount(taxAmount)}</span>
                     </div>
 
                     {/* Total */}
                     <div className="flex justify-between items-end pt-2">
                       <div className="flex flex-col">
                         <span className="text-slate-500 dark:text-slate-400 text-xs font-bold uppercase">Total Due</span>
-                        <span className="text-slate-400 text-xs">(USD)</span>
+                        <span className="text-slate-400 text-xs">(INR)</span>
                       </div>
-                      <span className="text-3xl font-extrabold text-text-main-light dark:text-text-main-dark font-mono tracking-tight">${totalDue.toFixed(2)}</span>
+                      <span className="text-3xl font-extrabold text-text-main-light dark:text-text-main-dark font-mono tracking-tight">₹{formatInrAmount(totalDue)}</span>
                     </div>
                   </div>
 
@@ -473,7 +478,7 @@ export default function CheckoutClient({ bookingId }: { bookingId: string }) {
                     <div>
                       <h4 className="text-sm font-bold text-text-main-light dark:text-text-main-dark mb-1">Policy Reminder</h4>
                       <p className="text-xs text-text-sub-light dark:text-text-sub-dark leading-relaxed">
-                        Corporate guests from <span className="font-bold">{data.corporationName}</span> require receipts for all incidental charges over $25.00. Please ensure files are attached.
+                        Corporate guests from <span className="font-bold">{data.corporationName}</span> require receipts for all incidental charges over ₹25.00. Please ensure files are attached.
                       </p>
                     </div>
                   </div>
