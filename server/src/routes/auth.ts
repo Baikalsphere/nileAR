@@ -570,6 +570,16 @@ router.post("/register", authLimiter, async (req, res, next) => {
       accessToken
     });
   } catch (error: any) {
+    if (error?.code && ["EAUTH", "ETIMEDOUT", "ESOCKET", "ECONNECTION"].includes(error.code)) {
+      console.error("[mailer] Failed to send hotel credentials email", {
+        code: error.code,
+        responseCode: error.responseCode,
+        command: error.command,
+        response: error.response,
+        message: error.message
+      });
+    }
+
     if (error?.code === "23505") {
       return res.status(409).json({ error: { message: "Email already registered" } });
     }

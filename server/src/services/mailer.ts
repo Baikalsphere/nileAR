@@ -9,6 +9,16 @@ const getTransporter = () => {
   }
 
   if (!transporter) {
+    console.info("[mailer] Initializing transporter", {
+      host: config.smtpHost,
+      port: config.smtpPort,
+      secure: config.smtpSecure,
+      hasUser: Boolean(config.smtpUser),
+      hasPass: Boolean(config.smtpPass),
+      from: config.smtpFrom,
+      mailEnabled: config.mailEnabled
+    });
+
     transporter = nodemailer.createTransport({
       host: config.smtpHost,
       port: config.smtpPort,
