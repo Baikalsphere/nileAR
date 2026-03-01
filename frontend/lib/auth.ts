@@ -287,3 +287,12 @@ export const createHotelAccountBySecret = async (
     body: JSON.stringify(payload)
   });
 };
+
+export const verifyProvisioningSecret = async (provisioningSecret: string) => {
+  return request<{ ok: boolean }>("/api/auth/admin/provisioning/verify", {
+    method: "POST",
+    headers: {
+      "x-admin-provisioning-secret": provisioningSecret
+    }
+  });
+};

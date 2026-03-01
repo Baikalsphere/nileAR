@@ -3,6 +3,7 @@
 import { FormEvent, useMemo, useState } from 'react'
 import {
   createHotelAccountBySecret,
+  verifyProvisioningSecret,
   type AdminCreatedHotelAccount
 } from '@/lib/auth'
 
@@ -10,6 +11,8 @@ export default function SecretAdminClient() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isVerifyingSecret, setIsVerifyingSecret] = useState(false)
+  const [isSecretVerified, setIsSecretVerified] = useState(false)
 
   const [provisioningSecret, setProvisioningSecret] = useState('')
   const [hotelName, setHotelName] = useState('')
@@ -22,6 +25,31 @@ export default function SecretAdminClient() {
     []
   )
 
+  const handleVerifySecret = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setError(null)
+    setSuccess(null)
+    setCreatedAccount(null)
+
+    const trimmedSecret = provisioningSecret.trim()
+    if (!trimmedSecret) {
+      setError('Provisioning secret is required')
+      return
+    }
+
+    setIsVerifyingSecret(true)
+    try {
+      await verifyProvisioningSecret(trimmedSecret)
+      setIsSecretVerified(true)
+      setSuccess('Provisioning secret verified. You can now register a hotel account.')
+    } catch (verifyError) {
+      const message = verifyError instanceof Error ? verifyError.message : 'Failed to verify provisioning secret'
+      setError(message)
+    } finally {
+      setIsVerifyingSecret(false)
+    }
+  }
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setError(null)
@@ -30,10 +58,11 @@ export default function SecretAdminClient() {
     setIsSubmitting(true)
 
     try {
-      const trimmedSecret = provisioningSecret.trim()
-      if (!trimmedSecret) {
-        throw new Error('Provisioning secret is required')
+      if (!isSecretVerified) {
+        throw new Error('Verify provisioning secret first')
       }
+
+      const trimmedSecret = provisioningSecret.trim()
 
       const response = await createHotelAccountBySecret(
         {
@@ -77,8 +106,8 @@ export default function SecretAdminClient() {
           </div>
         ) : null}
 
-        <form onSubmit={handleSubmit} className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-          <div className="grid grid-cols-1 gap-4">
+        {!isSecretVerified ? (
+          <form onSubmit={handleVerifySecret} className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
             <div>
               <label className="mb-1 block text-sm font-semibold text-text-main-light dark:text-text-main-dark">Provisioning Secret</label>
               <input
@@ -91,55 +120,70 @@ export default function SecretAdminClient() {
               />
             </div>
 
-            <div>
-              <label className="mb-1 block text-sm font-semibold text-text-main-light dark:text-text-main-dark">Hotel Name</label>
-              <input
-                required
-                value={hotelName}
-                onChange={(event) => setHotelName(event.target.value)}
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                placeholder="Enter hotel name"
-              />
+            <div className="mt-6 flex justify-end">
+              <button
+                type="submit"
+                disabled={isVerifyingSecret}
+                className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                <span className="material-symbols-outlined text-[18px]">verified_user</span>
+                {isVerifyingSecret ? 'Verifying...' : 'Verify Secret'}
+              </button>
+            </div>
+          </form>
+        ) : (
+          <form onSubmit={handleSubmit} className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <div className="grid grid-cols-1 gap-4">
+              <div>
+                <label className="mb-1 block text-sm font-semibold text-text-main-light dark:text-text-main-dark">Hotel Name</label>
+                <input
+                  required
+                  value={hotelName}
+                  onChange={(event) => setHotelName(event.target.value)}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  placeholder="Enter hotel name"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-semibold text-text-main-light dark:text-text-main-dark">Registered Email</label>
+                <input
+                  required
+                  type="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  placeholder="accounts@hotel.com"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-semibold text-text-main-light dark:text-text-main-dark">Primary Contact Name (optional)</label>
+                <input
+                  value={fullName}
+                  onChange={(event) => setFullName(event.target.value)}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  placeholder="Enter contact person name"
+                />
+              </div>
             </div>
 
-            <div>
-              <label className="mb-1 block text-sm font-semibold text-text-main-light dark:text-text-main-dark">Registered Email</label>
-              <input
-                required
-                type="email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                placeholder="accounts@hotel.com"
-              />
+            <p className="mt-4 text-xs text-slate-500 dark:text-slate-400">
+              {helperText}
+            </p>
+
+            <div className="mt-6 flex justify-end">
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                <span className="material-symbols-outlined text-[18px]">person_add</span>
+                {isSubmitting ? 'Creating account...' : 'Create Hotel Account'}
+              </button>
             </div>
-
-            <div>
-              <label className="mb-1 block text-sm font-semibold text-text-main-light dark:text-text-main-dark">Primary Contact Name (optional)</label>
-              <input
-                value={fullName}
-                onChange={(event) => setFullName(event.target.value)}
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                placeholder="Enter contact person name"
-              />
-            </div>
-          </div>
-
-          <p className="mt-4 text-xs text-slate-500 dark:text-slate-400">
-            {helperText}
-          </p>
-
-          <div className="mt-6 flex justify-end">
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70"
-            >
-              <span className="material-symbols-outlined text-[18px]">person_add</span>
-              {isSubmitting ? 'Creating account...' : 'Create Hotel Account'}
-            </button>
-          </div>
-        </form>
+          </form>
+        )}
 
         {createdAccount ? (
           <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">

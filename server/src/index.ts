@@ -30,7 +30,7 @@ app.use(
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-CSRF-Token"]
+    allowedHeaders: ["Content-Type", "Authorization", "X-CSRF-Token", "x-admin-provisioning-secret"]
   })
 );
 app.use(express.json({ limit: "2mb" }));
