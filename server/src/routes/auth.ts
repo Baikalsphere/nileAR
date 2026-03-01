@@ -648,6 +648,15 @@ router.post("/admin/hotel-accounts", async (req, res, next) => {
       client.release();
     }
   } catch (error: any) {
+    console.error("[mailer] Failed to send hotel credentials email", {
+      code: error?.code,
+      responseCode: error?.responseCode,
+      command: error?.command,
+      response: error?.response,
+      message: error?.message,
+      stack: error?.stack
+    });
+
     if (error?.code === "23505") {
       return res.status(409).json({ error: { message: "Email already registered" } });
     }
@@ -658,7 +667,8 @@ router.post("/admin/hotel-accounts", async (req, res, next) => {
       error?.code === "ESOCKET" ||
       error?.code === "ECONNECTION"
     ) {
-      return res.status(502).json({ error: { message: "Failed to send credentials email. Check SMTP configuration on server." } });
+      const details = [error?.code, error?.responseCode].filter(Boolean).join("/");
+      return res.status(502).json({ error: { message: `Failed to send credentials email. Check SMTP configuration on server.${details ? ` (${details})` : ""}` } });
     }
 
     return next(error);
