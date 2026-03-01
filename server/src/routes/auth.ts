@@ -579,30 +579,6 @@ router.post("/register", authLimiter, async (req, res, next) => {
 
 router.post("/admin/hotel-accounts", async (req, res, next) => {
   try {
-    const configuredSecret = config.adminProvisioningSecret;
-    if (!configuredSecret) {
-      return res.status(503).json({ error: { message: "Admin provisioning is not configured" } });
-    }
-
-    const providedSecret = String(req.headers["x-admin-provisioning-secret"] ?? "").trim();
-
-router.post("/admin/provisioning/verify", async (req, res) => {
-  const configuredSecret = config.adminProvisioningSecret;
-  if (!configuredSecret) {
-    return res.status(503).json({ error: { message: "Admin provisioning is not configured" } });
-  }
-
-  const providedSecret = String(req.headers["x-admin-provisioning-secret"] ?? "").trim();
-  if (!providedSecret || providedSecret !== configuredSecret) {
-    return res.status(401).json({ error: { message: "Unauthorized" } });
-  }
-
-  return res.status(200).json({ ok: true });
-});
-    if (!providedSecret || providedSecret !== configuredSecret) {
-      return res.status(401).json({ error: { message: "Unauthorized" } });
-    }
-
     const parsed = adminCreateHotelAccountSchema.parse(req.body);
     const normalizedEmail = parsed.email.trim().toLowerCase();
     const normalizedHotelName = parsed.hotelName.trim();

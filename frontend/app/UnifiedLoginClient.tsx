@@ -170,14 +170,6 @@ export default function UnifiedLoginClient() {
             >
               {isSubmitting ? "Signing in..." : "Log in"}
             </button>
-
-            <button
-              type="button"
-              onClick={() => router.push('/hotel-finance/secret-admin')}
-              className="block w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white/70 dark:bg-slate-900/50 px-4 py-3 text-center text-sm font-semibold text-slate-700 dark:text-slate-200 transition hover:border-primary hover:text-primary"
-            >
-              Admin Only
-            </button>
           </form>
 
           <p className="mt-5 text-xs text-slate-500 dark:text-slate-400 text-center">

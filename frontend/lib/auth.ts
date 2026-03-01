@@ -276,23 +276,10 @@ export const createHotelAccountBySecret = async (
     email: string;
     hotelName: string;
     fullName?: string;
-  },
-  provisioningSecret: string
+  }
 ) => {
   return request<AdminCreateHotelAccountResponse>("/api/auth/admin/hotel-accounts", {
     method: "POST",
-    headers: {
-      "x-admin-provisioning-secret": provisioningSecret
-    },
     body: JSON.stringify(payload)
-  });
-};
-
-export const verifyProvisioningSecret = async (provisioningSecret: string) => {
-  return request<{ ok: boolean }>("/api/auth/admin/provisioning/verify", {
-    method: "POST",
-    headers: {
-      "x-admin-provisioning-secret": provisioningSecret
-    }
   });
 };
