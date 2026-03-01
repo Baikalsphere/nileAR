@@ -8,7 +8,7 @@
 
 ### Option A: Use `server/render.yaml` Blueprint
 1. In Render, create a **Blueprint** from your GitHub repo.
-2. Select the `server/render.yaml` config.
+2. Render will automatically detect the root-level `render.yaml`.
 3. Set required env vars before first deploy.
 
 ### Option B: Manual Web Service
