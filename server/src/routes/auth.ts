@@ -189,10 +189,12 @@ const parseTtlMs = (ttl: string) => {
   return value * multipliers[unit];
 };
 
+const refreshCookieSameSite: "none" | "strict" = config.isProd ? "none" : "strict";
+
 const refreshCookieOptions = {
   httpOnly: true,
   secure: config.isProd,
-  sameSite: "strict" as const,
+  sameSite: refreshCookieSameSite,
   path: "/api/auth/refresh",
   maxAge: parseTtlMs(config.refreshTokenTtl)
 };
@@ -200,7 +202,7 @@ const refreshCookieOptions = {
 const refreshCookieClearOptions = {
   httpOnly: true,
   secure: config.isProd,
-  sameSite: "strict" as const,
+  sameSite: refreshCookieSameSite,
   path: "/api/auth/refresh"
 };
 
