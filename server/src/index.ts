@@ -20,7 +20,11 @@ app.use(
         return callback(null, true);
       }
       const isLocalDevOrigin = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+      const isVercelOrigin = /^https:\/\/[a-z0-9-]+(?:\.[a-z0-9-]+)*\.vercel\.app$/i.test(origin);
       if (config.nodeEnv !== "production" && isLocalDevOrigin) {
+        return callback(null, true);
+      }
+      if (config.nodeEnv === "production" && isVercelOrigin) {
         return callback(null, true);
       }
       if (config.corsOrigins.includes(origin)) {
