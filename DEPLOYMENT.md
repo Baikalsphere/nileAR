@@ -13,7 +13,7 @@
 
 ### Option B: Manual Web Service
 - Root Directory: `server`
-- Build Command: `npm ci && npm run build`
+- Build Command: `npm ci --include=dev && npm run build`
 - Start Command: `npm start`
 - Environment: `Node`
 
