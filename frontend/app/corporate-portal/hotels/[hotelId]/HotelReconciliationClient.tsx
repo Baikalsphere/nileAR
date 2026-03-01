@@ -7,8 +7,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   corporateTokenStorage,
+  fetchCorporateHotelLatestContract,
   fetchCorporateHotels,
   fetchCorporateInvoices,
+  type CorporateHotelLatestContract,
   type CorporateHotelSummary,
   type CorporateInvoice
 } from '@/lib/corporateAuth'
@@ -33,6 +35,7 @@ export default function HotelReconciliationClient({ hotelId }: { hotelId: string
   const [error, setError] = useState<string | null>(null)
   const [hotel, setHotel] = useState<CorporateHotelSummary | null>(null)
   const [invoices, setInvoices] = useState<CorporateInvoice[]>([])
+  const [latestContract, setLatestContract] = useState<CorporateHotelLatestContract | null>(null)
   const [filterStatus, setFilterStatus] = useState<'all' | 'paid' | 'unpaid' | 'overdue'>('all')
 
   useEffect(() => {
@@ -63,6 +66,9 @@ export default function HotelReconciliationClient({ hotelId }: { hotelId: string
 
         setHotel(selectedHotel)
         setInvoices(invoicesResponse.invoices.filter((entry) => entry.hotelId === hotelId))
+
+        const contractResponse = await fetchCorporateHotelLatestContract(hotelId)
+        setLatestContract(contractResponse.contract)
       } catch (loadError) {
         const message = loadError instanceof Error ? loadError.message : 'Failed to load reconciliation data'
         setError(message)
@@ -155,26 +161,48 @@ export default function HotelReconciliationClient({ hotelId }: { hotelId: string
             )}
 
             <div className="flex flex-col gap-4">
-              <div className="flex-1">
-                <div className="flex items-center gap-4 mb-3">
-                  <h1 className="text-slate-900 dark:text-white text-3xl font-extrabold">{hotel.name}</h1>
-                  <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${hotel.status === 'active' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400'}`}>
-                    {hotel.status === 'active' ? 'Active' : 'Settled'}
-                  </span>
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex-1">
+                  <div className="flex items-center gap-4 mb-3">
+                    <h1 className="text-slate-900 dark:text-white text-3xl font-extrabold">{hotel.name}</h1>
+                    <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${hotel.status === 'active' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400'}`}>
+                      {hotel.status === 'active' ? 'Active' : 'Settled'}
+                    </span>
+                  </div>
+                  <div className="grid gap-2 text-sm text-slate-600 dark:text-slate-400">
+                    <div className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-[16px]">location_on</span>
+                      <span>{hotel.location || '-'}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-[16px]">hotel</span>
+                      <span>{hotel.totalStays} total stays · {hotel.activeStays} active stays</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-[16px]">event</span>
+                      <span>Last stay: {formatDate(hotel.lastStayDate)}</span>
+                    </div>
+                  </div>
                 </div>
-                <div className="grid gap-2 text-sm text-slate-600 dark:text-slate-400">
-                  <div className="flex items-center gap-2">
-                    <span className="material-symbols-outlined text-[16px]">location_on</span>
-                    <span>{hotel.location || '-'}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="material-symbols-outlined text-[16px]">hotel</span>
-                    <span>{hotel.totalStays} total stays · {hotel.activeStays} active stays</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="material-symbols-outlined text-[16px]">event</span>
-                    <span>Last stay: {formatDate(hotel.lastStayDate)}</span>
-                  </div>
+
+                <div className="flex flex-col items-end gap-2">
+                  <Link
+                    href={`/corporate-portal/hotels/${hotelId}/contract`}
+                    className="inline-flex h-11 items-center justify-center rounded-lg bg-blue-600 px-5 text-white shadow-sm transition-all hover:bg-blue-700 focus:ring-4 focus:ring-blue-500/30"
+                  >
+                    <span className="material-symbols-outlined mr-2 text-[20px]">description</span>
+                    <span className="text-sm font-bold leading-normal">View Contract</span>
+                  </Link>
+
+                  {latestContract?.signedAt ? (
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      Signed on {new Date(latestContract.signedAt).toLocaleDateString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric'
+                      })}
+                    </p>
+                  ) : null}
                 </div>
               </div>
             </div>

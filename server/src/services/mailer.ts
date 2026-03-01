@@ -54,6 +54,39 @@ export const sendCorporateCredentialsEmail = async (payload: {
   });
 };
 
+export const sendHotelCredentialsEmail = async (payload: {
+  recipientEmail: string;
+  hotelName: string;
+  userId: string;
+  password: string;
+}) => {
+  const tx = getTransporter();
+
+  await tx.sendMail({
+    from: config.smtpFrom,
+    to: payload.recipientEmail,
+    subject: `Hotel Finance Credentials - ${payload.hotelName}`,
+    text: [
+      `Hello ${payload.hotelName},`,
+      "",
+      "Your Hotel Finance account has been created.",
+      "Your login credentials are:",
+      `User ID: ${payload.userId}`,
+      `Password: ${payload.password}`,
+      "",
+      "Visit the Hotel Profile section to update your password.",
+      ""
+    ].join("\n"),
+    html: `
+      <p>Hello ${payload.hotelName},</p>
+      <p>Your Hotel Finance account has been created.</p>
+      <p>Your login credentials are:</p>
+      <p><strong>User ID:</strong> ${payload.userId}<br/><strong>Password:</strong> ${payload.password}</p>
+      <p>Visit the Hotel Profile section to update your password.</p>
+    `
+  });
+};
+
 export const sendContractSignatureLinkEmail = async (payload: {
   recipientEmail: string;
   organizationName: string;

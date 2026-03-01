@@ -9,6 +9,7 @@ import { CorporateEmployeeStay, corporateTokenStorage, fetchCorporateEmployeeSta
 
 interface Stay {
   id: string
+  invoiceNumber?: string
   guestName: string
   employeeId: string
   department?: string
@@ -61,6 +62,7 @@ export default function EmployeeStaysClient() {
         const response = await fetchCorporateEmployeeStays()
         const mapped: Stay[] = response.stays.map((stay: CorporateEmployeeStay) => ({
           id: stay.id,
+          invoiceNumber: stay.invoiceNumber ?? undefined,
           guestName: stay.employeeName,
           employeeId: stay.employeeCode,
           department: stay.department ?? undefined,
@@ -253,8 +255,18 @@ export default function EmployeeStaysClient() {
                         <td colSpan={9} className="p-6 text-center text-sm text-slate-500 dark:text-slate-400">Loading employee stays...</td>
                       </tr>
                     ) : filteredStays.map((stay) => (
-                      <tr key={stay.id} className="group hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                        <td className="p-4">
+                      <tr
+                        key={stay.id}
+                        className={`group hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${stay.invoiceNumber ? 'cursor-pointer' : ''}`}
+                        title={stay.invoiceNumber ? 'Open invoice' : 'No invoice yet'}
+                        onClick={() => {
+                          if (!stay.invoiceNumber) {
+                            return
+                          }
+                          router.push(`/corporate-portal/invoices/${encodeURIComponent(stay.invoiceNumber)}`)
+                        }}
+                      >
+                        <td className="p-4" onClick={(e) => e.stopPropagation()}>
                           <input
                             type="checkbox"
                             className="rounded border-slate-300 text-primary focus:ring-primary dark:bg-slate-800 dark:border-slate-600"
@@ -283,11 +295,16 @@ export default function EmployeeStaysClient() {
                         <td className="p-4 text-sm text-center text-slate-900 dark:text-slate-300">{stay.nights}</td>
                         <td className="p-4 text-sm font-bold text-right text-slate-900 dark:text-slate-200">₹{formatInrAmount(stay.totalAmount)}</td>
                         <td className="p-4">
-                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(stay.status)}`}>
-                            {stay.status}
-                          </span>
+                          <div className="flex flex-col gap-1">
+                            <span className={`inline-flex w-fit items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(stay.status)}`}>
+                              {stay.status}
+                            </span>
+                            {!stay.invoiceNumber && (
+                              <span className="text-[11px] text-slate-500 dark:text-slate-400">No invoice yet</span>
+                            )}
+                          </div>
                         </td>
-                        <td className="p-4 text-right">
+                        <td className="p-4 text-right" onClick={(e) => e.stopPropagation()}>
                           <button className="text-slate-500 hover:text-slate-900 dark:text-slate-500 dark:hover:text-white p-1 rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">
                             <span className="material-symbols-outlined text-[20px]">more_vert</span>
                           </button>

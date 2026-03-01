@@ -24,6 +24,18 @@ export interface HotelProfileResponse {
   profile: HotelProfile;
 }
 
+export interface AdminCreatedHotelAccount {
+  id: string;
+  email: string;
+  role: string;
+  hotelName: string;
+}
+
+export interface AdminCreateHotelAccountResponse {
+  account: AdminCreatedHotelAccount;
+  message: string;
+}
+
 const apiBaseUrl =
   process.env.NEXT_PUBLIC_API_URL ??
   process.env.NEXT_PUBLIC_API_BASE_URL ??
@@ -243,4 +255,35 @@ export const uploadHotelLogo = async (file: File) => {
       logoUrl: toAbsoluteApiUrl(response.profile.logoUrl)
     }
   };
+};
+
+export const createHotelAccountByAdmin = async (payload: {
+  email: string;
+  hotelName: string;
+  fullName?: string;
+}) => {
+  return request<AdminCreateHotelAccountResponse>("/api/auth/admin/hotel-accounts", {
+    method: "POST",
+    headers: {
+      ...getAuthHeaders()
+    },
+    body: JSON.stringify(payload)
+  });
+};
+
+export const createHotelAccountBySecret = async (
+  payload: {
+    email: string;
+    hotelName: string;
+    fullName?: string;
+  },
+  provisioningSecret: string
+) => {
+  return request<AdminCreateHotelAccountResponse>("/api/auth/admin/hotel-accounts", {
+    method: "POST",
+    headers: {
+      "x-admin-provisioning-secret": provisioningSecret
+    },
+    body: JSON.stringify(payload)
+  });
 };

@@ -51,6 +51,18 @@ interface ContractRecord {
   signedAt?: string | null
 }
 
+interface SignedContractHistoryItem {
+  id: string
+  organizationId: string
+  status: 'signed'
+  signedBy?: string | null
+  signedDesignation?: string | null
+  signedAt: string
+  createdAt: string
+  updatedAt: string
+  pdfUrl: string
+}
+
 const defaultContractData = (organizationId: string): ContractData => ({
   hotelName: 'Radisson Resort & Spa',
   hotelLocation: 'Kandla',
@@ -127,9 +139,12 @@ export default function ContractClient({ organizationId }: ContractClientProps) 
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [isSendingLink, setIsSendingLink] = useState(false)
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [shareableLink, setShareableLink] = useState('')
+  const [currentSignedContract, setCurrentSignedContract] = useState<SignedContractHistoryItem | null>(null)
+  const [previousSignedContracts, setPreviousSignedContracts] = useState<SignedContractHistoryItem[]>([])
 
   const getAuthHeaders = () => {
     const token = tokenStorage.get()
@@ -147,6 +162,23 @@ export default function ContractClient({ organizationId }: ContractClientProps) 
     if (contractStatus === 'sent') return 'Pending'
     return 'Pending'
   }, [contractStatus])
+
+  const formatSignedDate = (value?: string | null) => {
+    if (!value) {
+      return '-'
+    }
+
+    const parsed = new Date(value)
+    if (Number.isNaN(parsed.getTime())) {
+      return '-'
+    }
+
+    return parsed.toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric'
+    })
+  }
 
   useEffect(() => {
     return () => {
@@ -200,7 +232,45 @@ export default function ContractClient({ organizationId }: ContractClientProps) 
     }
   }
 
-  const directPdfHref = contractPdfBlobUrl ?? (contractPdfUrl ? `${apiBaseUrl}${contractPdfUrl}` : null)
+  const openContractPdfInNewTab = async (pdfUrl: string) => {
+    try {
+      const requestUrl = pdfUrl.startsWith('http://') || pdfUrl.startsWith('https://')
+        ? pdfUrl
+        : `${apiBaseUrl}${pdfUrl}`
+
+      let response: Response
+
+      try {
+        response = await fetch(requestUrl, {
+          headers: {
+            ...getAuthHeaders()
+          }
+        })
+      } catch (error) {
+        const alternateUrl = withAlternateLocalhost(requestUrl)
+        if (!(error instanceof TypeError) || !alternateUrl) {
+          throw error
+        }
+
+        response = await fetch(alternateUrl, {
+          headers: {
+            ...getAuthHeaders()
+          }
+        })
+      }
+
+      if (!response.ok) {
+        throw new Error('Unable to open contract PDF')
+      }
+
+      const blob = await response.blob()
+      const blobUrl = URL.createObjectURL(blob)
+      window.open(blobUrl, '_blank', 'noopener,noreferrer')
+      window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000)
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to open contract PDF')
+    }
+  }
 
   useEffect(() => {
     return () => {
@@ -212,6 +282,7 @@ export default function ContractClient({ organizationId }: ContractClientProps) 
 
   const load = async () => {
     setIsLoading(true)
+    setIsHistoryLoading(true)
     setErrorMessage(null)
 
     try {
@@ -264,10 +335,31 @@ export default function ContractClient({ organizationId }: ContractClientProps) 
         })
         setIsConfiguring(false)
       }
+
+      const signedHistoryResponse = await fetch(`${apiBaseUrl}/api/organizations/${organizationId}/contracts/signed-history`, {
+        credentials: 'include',
+        headers: {
+          ...getAuthHeaders()
+        }
+      })
+
+      if (signedHistoryResponse.ok) {
+        const signedHistoryData = (await signedHistoryResponse.json()) as {
+          currentSignedContract: SignedContractHistoryItem | null
+          previousSignedContracts: SignedContractHistoryItem[]
+        }
+
+        setCurrentSignedContract(signedHistoryData.currentSignedContract)
+        setPreviousSignedContracts(signedHistoryData.previousSignedContracts ?? [])
+      } else {
+        setCurrentSignedContract(null)
+        setPreviousSignedContracts([])
+      }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to load contract data')
     } finally {
       setIsLoading(false)
+      setIsHistoryLoading(false)
     }
   }
 
@@ -632,16 +724,24 @@ export default function ContractClient({ organizationId }: ContractClientProps) 
                     <span className="material-symbols-outlined text-[18px]">print</span>
                     <span>Print</span>
                   </button>
-                  {directPdfHref && (
-                    <a
-                      href={directPdfHref}
-                      target="_blank"
-                      rel="noreferrer"
+                  {(contractPdfUrl || contractPdfBlobUrl) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (contractPdfBlobUrl) {
+                          window.open(contractPdfBlobUrl, '_blank', 'noopener,noreferrer')
+                          return
+                        }
+
+                        if (contractPdfUrl) {
+                          void openContractPdfInNewTab(contractPdfUrl)
+                        }
+                      }}
                       className="inline-flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-800 text-white rounded-lg transition-colors text-sm font-medium"
                     >
                       <span className="material-symbols-outlined text-[18px]">open_in_new</span>
                       <span>PDF</span>
-                    </a>
+                    </button>
                   )}
                 </div>
               </div>
@@ -780,6 +880,80 @@ export default function ContractClient({ organizationId }: ContractClientProps) 
                 ) : (
                   <div className="p-8 text-sm text-slate-600 dark:text-slate-300">
                     Contract PDF preview is not available yet.
+                  </div>
+                )}
+              </div>
+
+              <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-6 mb-6">
+                <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
+                  <span className="material-symbols-outlined">history</span>
+                  Signed Contract History
+                </h3>
+
+                {isHistoryLoading ? (
+                  <p className="text-sm text-slate-600 dark:text-slate-300">Loading signed contract history...</p>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-4">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">Current Signed Contract</p>
+                      {currentSignedContract ? (
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <p className="text-sm font-semibold text-slate-900 dark:text-white">{currentSignedContract.id}</p>
+                            <p className="text-xs text-slate-600 dark:text-slate-400">
+                              Signed on {formatSignedDate(currentSignedContract.signedAt)}
+                            </p>
+                          </div>
+                          <a
+                            href={`${apiBaseUrl}${currentSignedContract.pdfUrl}`}
+                            onClick={(event) => {
+                              event.preventDefault()
+                              void openContractPdfInNewTab(currentSignedContract.pdfUrl)
+                            }}
+                            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700"
+                          >
+                            <span className="material-symbols-outlined text-[16px]">picture_as_pdf</span>
+                            View Contract
+                          </a>
+                        </div>
+                      ) : (
+                        <p className="text-sm text-slate-600 dark:text-slate-400">No signed contract available yet.</p>
+                      )}
+                    </div>
+
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">Previous Signed Contracts</p>
+                      {previousSignedContracts.length === 0 ? (
+                        <p className="text-sm text-slate-600 dark:text-slate-400">No previous signed contracts found.</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {previousSignedContracts.map((contract) => (
+                            <div
+                              key={contract.id}
+                              className="flex flex-col gap-2 rounded-lg border border-slate-200 dark:border-slate-700 p-3 sm:flex-row sm:items-center sm:justify-between"
+                            >
+                              <div>
+                                <p className="text-sm font-semibold text-slate-900 dark:text-white">{contract.id}</p>
+                                <p className="text-xs text-slate-600 dark:text-slate-400">
+                                  Signed on {formatSignedDate(contract.signedAt)}
+                                </p>
+                              </div>
+                              <a
+                                href={`${apiBaseUrl}${contract.pdfUrl}`}
+                                onClick={(event) => {
+                                  event.preventDefault()
+                                  void openContractPdfInNewTab(contract.pdfUrl)
+                                }}
+                                className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+                              >
+                                <span className="material-symbols-outlined text-[16px]">visibility</span>
+                                View
+                              </a>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>

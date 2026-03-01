@@ -1441,6 +1441,56 @@ router.get("/:organizationId/contracts/latest", async (req, res, next) => {
   }
 });
 
+router.get("/:organizationId/contracts/signed-history", async (req, res, next) => {
+  try {
+    const userId = req.user?.id;
+    const organizationId = req.params.organizationId;
+
+    const result = await query(
+      `SELECT c.id,
+              c.organization_id,
+              c.status,
+              c.signed_by,
+              c.signed_designation,
+              c.signed_at,
+              c.created_at,
+              c.updated_at
+       FROM organization_contracts c
+       WHERE c.organization_id = $1
+         AND c.hotel_user_id = $2
+         AND c.status = 'signed'
+         AND c.signed_at IS NOT NULL
+         AND EXISTS (
+           SELECT 1
+           FROM hotel_organizations ho
+           WHERE ho.organization_id = c.organization_id
+             AND ho.hotel_user_id = $2
+         )
+       ORDER BY c.signed_at DESC, c.created_at DESC`,
+      [organizationId, userId]
+    );
+
+    const contracts = result.rows.map((row) => ({
+      id: row.id,
+      organizationId: row.organization_id,
+      status: row.status,
+      signedBy: row.signed_by,
+      signedDesignation: row.signed_designation,
+      signedAt: row.signed_at,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      pdfUrl: `/api/organizations/${organizationId}/contracts/${row.id}/pdf`
+    }));
+
+    return res.status(200).json({
+      currentSignedContract: contracts[0] ?? null,
+      previousSignedContracts: contracts.slice(1)
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.get("/:organizationId/contracts/:contractId/pdf", async (req, res, next) => {
   try {
     const userId = req.user?.id;

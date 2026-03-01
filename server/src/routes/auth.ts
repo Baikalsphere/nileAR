@@ -1,5 +1,6 @@
 import { Router } from "express";
 import type { Request, Response } from "express";
+import type { PoolClient } from "pg";
 import fs from "node:fs";
 import path from "node:path";
 import bcrypt from "bcrypt";
@@ -8,7 +9,7 @@ import jwt from "jsonwebtoken";
 import multer from "multer";
 import { z } from "zod";
 import { config } from "../config.js";
-import { query } from "../db.js";
+import { pool, query } from "../db.js";
 import { authLimiter } from "../middleware/rateLimiters.js";
 import {
   createBillSignedUrl,
@@ -16,7 +17,10 @@ import {
   isSupabaseStorageConfigured,
   uploadHotelLogoToSupabase
 } from "../services/supabaseStorage.js";
-import { sendBookingRequestHotelNotificationEmail } from "../services/mailer.js";
+import {
+  sendBookingRequestHotelNotificationEmail,
+  sendHotelCredentialsEmail
+} from "../services/mailer.js";
 
 const router = Router();
 
@@ -47,6 +51,12 @@ const registerSchema = z.object({
 const loginSchema = z.object({
   email: z.string().email().max(320),
   password: z.string().min(1).max(128)
+});
+
+const adminCreateHotelAccountSchema = z.object({
+  email: z.string().email().max(320),
+  hotelName: z.string().min(2).max(160),
+  fullName: z.string().max(120).optional().nullable()
 });
 
 const corporateLoginSchema = z.object({
@@ -132,6 +142,36 @@ const hotelLogoUpload = multer({
     fileSize: 5 * 1024 * 1024
   }
 });
+
+const randomChars = (chars: string, length: number) => {
+  let result = "";
+  for (let index = 0; index < length; index += 1) {
+    const selectedIndex = Math.floor(Math.random() * chars.length);
+    result += chars[selectedIndex];
+  }
+  return result;
+};
+
+const createGeneratedHotelPassword = () => {
+  const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const lower = "abcdefghijkmnpqrstuvwxyz";
+  const numbers = "23456789";
+  const symbols = "!@#$%^&*";
+  const all = upper + lower + numbers + symbols;
+
+  const base = [
+    randomChars(upper, 1),
+    randomChars(lower, 1),
+    randomChars(numbers, 1),
+    randomChars(symbols, 1),
+    randomChars(all, 8)
+  ].join("");
+
+  return base
+    .split("")
+    .sort(() => Math.random() - 0.5)
+    .join("");
+};
 
 const parseTtlMs = (ttl: string) => {
   const match = ttl.match(/^(\d+)([smhd])$/);
@@ -531,6 +571,86 @@ router.post("/register", authLimiter, async (req, res, next) => {
     if (error?.code === "23505") {
       return res.status(409).json({ error: { message: "Email already registered" } });
     }
+    return next(error);
+  }
+});
+
+router.post("/admin/hotel-accounts", async (req, res, next) => {
+  try {
+    const configuredSecret = config.adminProvisioningSecret;
+    if (!configuredSecret) {
+      return res.status(503).json({ error: { message: "Admin provisioning is not configured" } });
+    }
+
+    const providedSecret = String(req.headers["x-admin-provisioning-secret"] ?? "").trim();
+    if (!providedSecret || providedSecret !== configuredSecret) {
+      return res.status(401).json({ error: { message: "Unauthorized" } });
+    }
+
+    const parsed = adminCreateHotelAccountSchema.parse(req.body);
+    const normalizedEmail = parsed.email.trim().toLowerCase();
+    const normalizedHotelName = parsed.hotelName.trim();
+    const normalizedFullName = normalizeOptional(parsed.fullName);
+
+    const generatedPassword = createGeneratedHotelPassword();
+    const passwordHash = await bcrypt.hash(generatedPassword, config.bcryptCost);
+    const client: PoolClient = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      const createdUserResult = await client.query(
+        `INSERT INTO users (email, password_hash, full_name, role)
+         VALUES ($1, $2, $3, $4)
+         RETURNING id, email, role`,
+        [normalizedEmail, passwordHash, normalizedFullName, "hotel_finance_user"]
+      );
+
+      const createdUser = createdUserResult.rows[0] as {
+        id: string;
+        email: string;
+        role: string;
+      };
+
+      await client.query(
+        `INSERT INTO hotel_profiles (user_id, hotel_name, contact_email)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (user_id)
+         DO UPDATE SET
+           hotel_name = EXCLUDED.hotel_name,
+           contact_email = EXCLUDED.contact_email`,
+        [createdUser.id, normalizedHotelName, normalizedEmail]
+      );
+
+      await sendHotelCredentialsEmail({
+        recipientEmail: normalizedEmail,
+        hotelName: normalizedHotelName,
+        userId: normalizedEmail,
+        password: generatedPassword
+      });
+
+      await client.query("COMMIT");
+
+      return res.status(201).json({
+        account: {
+          id: createdUser.id,
+          email: createdUser.email,
+          role: createdUser.role,
+          hotelName: normalizedHotelName
+        },
+        message: "Hotel account created and credentials sent to registered email"
+      });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  } catch (error: any) {
+    if (error?.code === "23505") {
+      return res.status(409).json({ error: { message: "Email already registered" } });
+    }
+
     return next(error);
   }
 });
@@ -1358,6 +1478,182 @@ router.get("/corporate/hotels/:hotelId/booking-request-meta", async (req, res, n
       employees,
       roomTypes
     });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/corporate/hotels/:hotelId/contracts/latest", async (req, res, next) => {
+  try {
+    const payload = getCorporatePayload(req, res);
+    if (!payload) {
+      return;
+    }
+
+    const hotelId = req.params.hotelId;
+
+    const relationshipResult = await query(
+      `SELECT 1
+       FROM hotel_organizations ho
+       WHERE ho.organization_id = $1
+         AND ho.hotel_user_id::text = $2
+       LIMIT 1`,
+      [payload.sub, hotelId]
+    );
+
+    if (relationshipResult.rowCount === 0) {
+      return res.status(404).json({ error: { message: "Hotel relationship not found for this organization" } });
+    }
+
+    const contractResult = await query(
+      `SELECT id,
+              status,
+              contract_data,
+              signed_at,
+              signed_by,
+              signed_designation,
+              created_at,
+              updated_at
+       FROM organization_contracts
+       WHERE organization_id = $1
+         AND hotel_user_id = $2
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [payload.sub, hotelId]
+    );
+
+    if (contractResult.rowCount === 0) {
+      return res.status(200).json({ contract: null });
+    }
+
+    const contract = contractResult.rows[0];
+    return res.status(200).json({
+      contract: {
+        id: contract.id,
+        status: contract.status,
+        contractData: contract.contract_data,
+        signedAt: contract.signed_at,
+        signedBy: contract.signed_by,
+        signedDesignation: contract.signed_designation,
+        createdAt: contract.created_at,
+        updatedAt: contract.updated_at,
+        pdfUrl: `/api/auth/corporate/hotels/${encodeURIComponent(hotelId)}/contracts/${encodeURIComponent(contract.id)}/pdf`
+      }
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/corporate/hotels/:hotelId/contracts/signed-history", async (req, res, next) => {
+  try {
+    const payload = getCorporatePayload(req, res);
+    if (!payload) {
+      return;
+    }
+
+    const hotelId = req.params.hotelId;
+
+    const relationshipResult = await query(
+      `SELECT 1
+       FROM hotel_organizations ho
+       WHERE ho.organization_id = $1
+         AND ho.hotel_user_id::text = $2
+       LIMIT 1`,
+      [payload.sub, hotelId]
+    );
+
+    if (relationshipResult.rowCount === 0) {
+      return res.status(404).json({ error: { message: "Hotel relationship not found for this organization" } });
+    }
+
+    const historyResult = await query(
+      `SELECT id,
+              status,
+              signed_at,
+              signed_by,
+              signed_designation,
+              created_at,
+              updated_at
+       FROM organization_contracts
+       WHERE organization_id = $1
+         AND hotel_user_id = $2
+         AND status = 'signed'
+         AND signed_at IS NOT NULL
+       ORDER BY signed_at DESC, created_at DESC`,
+      [payload.sub, hotelId]
+    );
+
+    const contracts = historyResult.rows.map((row) => ({
+      id: row.id,
+      status: row.status,
+      signedAt: row.signed_at,
+      signedBy: row.signed_by,
+      signedDesignation: row.signed_designation,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      pdfUrl: `/api/auth/corporate/hotels/${encodeURIComponent(hotelId)}/contracts/${encodeURIComponent(row.id)}/pdf`
+    }));
+
+    return res.status(200).json({
+      currentSignedContract: contracts[0] ?? null,
+      previousSignedContracts: contracts.slice(1)
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/corporate/hotels/:hotelId/contracts/:contractId/pdf", async (req, res, next) => {
+  try {
+    const payload = getCorporatePayload(req, res);
+    if (!payload) {
+      return;
+    }
+
+    const hotelId = req.params.hotelId;
+    const contractId = req.params.contractId;
+
+    const contractResult = await query(
+      `SELECT c.id, c.pdf_storage_path
+       FROM organization_contracts c
+       WHERE c.id = $1
+         AND c.organization_id = $2
+         AND c.hotel_user_id::text = $3
+         AND EXISTS (
+           SELECT 1
+           FROM hotel_organizations ho
+           WHERE ho.organization_id = c.organization_id
+             AND ho.hotel_user_id = c.hotel_user_id
+         )
+       LIMIT 1`,
+      [contractId, payload.sub, hotelId]
+    );
+
+    if (contractResult.rowCount === 0) {
+      return res.status(404).json({ error: { message: "Signed contract not found" } });
+    }
+
+    const row = contractResult.rows[0];
+    if (!row.pdf_storage_path) {
+      return res.status(404).json({ error: { message: "Contract PDF not available" } });
+    }
+
+    if (!isSupabaseStorageConfigured()) {
+      return res.status(500).json({ error: { message: "Supabase storage is not configured" } });
+    }
+
+    const signedUrl = await createBillSignedUrl(row.pdf_storage_path as string, 120);
+    const fileResponse = await fetch(signedUrl);
+    if (!fileResponse.ok) {
+      return res.status(404).json({ error: { message: "Contract PDF not found on cloud storage" } });
+    }
+
+    const buffer = Buffer.from(await fileResponse.arrayBuffer());
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="contract-${row.id as string}.pdf"`);
+    res.setHeader("Cache-Control", "public, max-age=3600");
+    return res.send(buffer);
   } catch (error) {
     return next(error);
   }

@@ -663,22 +663,22 @@ export default function OrganizationsClient() {
                         <td className="px-6 py-4">
                           <div className="flex items-center justify-center gap-2">
                             {org.contractStatus === 'signed' ? (
-                              <button
-                                disabled
-                                className="flex items-center gap-2 px-4 py-2 bg-slate-300 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-lg text-sm font-medium cursor-not-allowed"
-                                title="Contract already signed"
+                              <Link
+                                href={`/hotel-finance/organizations/${org.id}/contract`}
+                                className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors text-sm font-medium"
+                                title="View Contract"
                               >
-                                <span className="material-symbols-outlined text-[18px]">verified</span>
-                                <span>Contract Signed</span>
-                              </button>
+                                <span className="material-symbols-outlined text-[18px]">visibility</span>
+                                <span>View Contract</span>
+                              </Link>
                             ) : (
                               <Link
                                 href={`/hotel-finance/organizations/${org.id}/contract`}
                                 className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm font-medium"
-                                title="Generate Contract"
+                                title="View Contract"
                               >
-                                <span className="material-symbols-outlined text-[18px]">description</span>
-                                <span>Generate Contract</span>
+                                <span className="material-symbols-outlined text-[18px]">visibility</span>
+                                <span>View Contract</span>
                               </Link>
                             )}
                           </div>

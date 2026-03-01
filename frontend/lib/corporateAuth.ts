@@ -83,6 +83,29 @@ export interface CorporateHotelSummary {
   status: "active" | "settled";
 }
 
+export interface CorporateHotelLatestContract {
+  id: string;
+  status: "draft" | "sent" | "signed";
+  contractData?: Record<string, unknown> | null;
+  signedAt: string | null;
+  signedBy: string | null;
+  signedDesignation: string | null;
+  createdAt: string;
+  updatedAt: string;
+  pdfUrl: string;
+}
+
+export interface CorporateHotelSignedContractHistoryItem {
+  id: string;
+  status: "signed";
+  signedAt: string;
+  signedBy: string | null;
+  signedDesignation: string | null;
+  createdAt: string;
+  updatedAt: string;
+  pdfUrl: string;
+}
+
 export interface CorporateInvoiceDetail {
   id: string;
   invoiceNumber: string;
@@ -444,6 +467,62 @@ export const fetchCorporateHotels = async () => {
       ...hotel,
       logoUrl: toAbsoluteApiUrl(hotel.logoUrl)
     }))
+  };
+};
+
+export const fetchCorporateHotelLatestContract = async (hotelId: string) => {
+  const response = await fetch(`${corporateApiBaseUrl}/api/auth/corporate/hotels/${hotelId}/contracts/latest`, {
+    method: "GET",
+    credentials: "include",
+    headers: {
+      ...getCorporateAuthHeaders()
+    }
+  });
+
+  if (!response.ok) {
+    const message = await parseErrorMessage(response);
+    throw new Error(message);
+  }
+
+  const data = (await response.json()) as { contract: CorporateHotelLatestContract | null };
+
+  return {
+    contract: data.contract
+      ? {
+          ...data.contract,
+        pdfUrl: toAbsoluteApiUrl(data.contract.pdfUrl) ?? data.contract.pdfUrl
+        }
+      : null
+  };
+};
+
+export const fetchCorporateHotelSignedContractHistory = async (hotelId: string) => {
+  const response = await fetch(`${corporateApiBaseUrl}/api/auth/corporate/hotels/${hotelId}/contracts/signed-history`, {
+    method: "GET",
+    credentials: "include",
+    headers: {
+      ...getCorporateAuthHeaders()
+    }
+  });
+
+  if (!response.ok) {
+    const message = await parseErrorMessage(response);
+    throw new Error(message);
+  }
+
+  const data = (await response.json()) as {
+    currentSignedContract: CorporateHotelSignedContractHistoryItem | null;
+    previousSignedContracts: CorporateHotelSignedContractHistoryItem[];
+  };
+
+  const withResolvedUrl = (contract: CorporateHotelSignedContractHistoryItem) => ({
+    ...contract,
+    pdfUrl: toAbsoluteApiUrl(contract.pdfUrl) ?? contract.pdfUrl
+  });
+
+  return {
+    currentSignedContract: data.currentSignedContract ? withResolvedUrl(data.currentSignedContract) : null,
+    previousSignedContracts: (data.previousSignedContracts ?? []).map(withResolvedUrl)
   };
 };
 
