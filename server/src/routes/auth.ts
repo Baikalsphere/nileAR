@@ -643,6 +643,15 @@ router.post("/admin/hotel-accounts", async (req, res, next) => {
       return res.status(409).json({ error: { message: "Email already registered" } });
     }
 
+    if (
+      error?.code === "EAUTH" ||
+      error?.code === "ETIMEDOUT" ||
+      error?.code === "ESOCKET" ||
+      error?.code === "ECONNECTION"
+    ) {
+      return res.status(502).json({ error: { message: "Failed to send credentials email. Check SMTP configuration on server." } });
+    }
+
     return next(error);
   }
 });
