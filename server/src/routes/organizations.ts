@@ -1,4 +1,5 @@
 import { Router } from "express";
+import type { NextFunction, Request, Response } from "express";
 import bcrypt from "bcrypt";
 import crypto from "node:crypto";
 import { z } from "zod";
@@ -779,14 +780,14 @@ const ensureHotelOrganizationsTable = async () => {
 };
 
 // Handle CORS preflight for public endpoints
-router.options("/contracts/sign/:token/pdf", async (req, res) => {
+router.options("/contracts/sign/:token/pdf", async (req: Request, res: Response) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   return res.status(200).end();
 });
 
-router.get("/contracts/sign/:token", async (req, res, next) => {
+router.get("/contracts/sign/:token", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const token = req.params.token;
 
@@ -854,7 +855,7 @@ router.get("/contracts/sign/:token", async (req, res, next) => {
   }
 });
 
-router.get("/contracts/sign/:token/pdf", async (req, res, next) => {
+router.get("/contracts/sign/:token/pdf", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const token = req.params.token;
 
@@ -902,7 +903,7 @@ router.get("/contracts/sign/:token/pdf", async (req, res, next) => {
   }
 });
 
-router.post("/contracts/sign/:token", async (req, res, next) => {
+router.post("/contracts/sign/:token", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const token = req.params.token;
     const payload = submitSignatureSchema.parse(req.body);
@@ -956,7 +957,7 @@ router.post("/contracts/sign/:token", async (req, res, next) => {
 });
 
 router.use(requireAuth);
-router.use(async (_req, _res, next) => {
+router.use(async (_req: Request, _res: Response, next: NextFunction) => {
   try {
     await ensureHotelOrganizationsTable();
     return next();
@@ -965,7 +966,7 @@ router.use(async (_req, _res, next) => {
   }
 });
 
-router.get("/lookup", async (req, res, next) => {
+router.get("/lookup", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const userId = req.user?.id;
     const { corporateEmail } = lookupOrganizationQuerySchema.parse(req.query);
@@ -1016,7 +1017,7 @@ router.get("/lookup", async (req, res, next) => {
   }
 });
 
-router.post("/link-existing", async (req, res, next) => {
+router.post("/link-existing", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const userId = req.user?.id;
     const payload = linkOrganizationSchema.parse(req.body);
@@ -1057,7 +1058,7 @@ router.post("/link-existing", async (req, res, next) => {
   }
 });
 
-router.get("/", async (req, res, next) => {
+router.get("/", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const userId = req.user?.id;
     const result = await query(
@@ -1091,7 +1092,7 @@ router.get("/", async (req, res, next) => {
       [userId]
     );
 
-    const organizations = result.rows.map((row) => ({
+    const organizations = result.rows.map((row: any) => ({
       id: row.id as string,
       name: row.name as string,
       gst: row.gst as string | null,
@@ -1110,7 +1111,7 @@ router.get("/", async (req, res, next) => {
   }
 });
 
-router.get("/:organizationId", async (req, res, next) => {
+router.get("/:organizationId", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const userId = req.user?.id;
     const organizationId = req.params.organizationId;
@@ -1156,7 +1157,7 @@ router.get("/:organizationId", async (req, res, next) => {
   }
 });
 
-router.get("/:organizationId/reconciliation", async (req, res, next) => {
+router.get("/:organizationId/reconciliation", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const userId = req.user?.id;
     const organizationId = req.params.organizationId;
@@ -1283,7 +1284,7 @@ router.get("/:organizationId/reconciliation", async (req, res, next) => {
   }
 });
 
-router.post("/:organizationId/contracts", async (req, res, next) => {
+router.post("/:organizationId/contracts", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const userId = req.user?.id;
     const organizationId = req.params.organizationId;
@@ -1391,7 +1392,7 @@ router.post("/:organizationId/contracts", async (req, res, next) => {
   }
 });
 
-router.get("/:organizationId/contracts/latest", async (req, res, next) => {
+router.get("/:organizationId/contracts/latest", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const userId = req.user?.id;
     const organizationId = req.params.organizationId;
@@ -1441,7 +1442,7 @@ router.get("/:organizationId/contracts/latest", async (req, res, next) => {
   }
 });
 
-router.get("/:organizationId/contracts/signed-history", async (req, res, next) => {
+router.get("/:organizationId/contracts/signed-history", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const userId = req.user?.id;
     const organizationId = req.params.organizationId;
@@ -1470,7 +1471,7 @@ router.get("/:organizationId/contracts/signed-history", async (req, res, next) =
       [organizationId, userId]
     );
 
-    const contracts = result.rows.map((row) => ({
+    const contracts = result.rows.map((row: any) => ({
       id: row.id,
       organizationId: row.organization_id,
       status: row.status,
@@ -1491,7 +1492,7 @@ router.get("/:organizationId/contracts/signed-history", async (req, res, next) =
   }
 });
 
-router.get("/:organizationId/contracts/:contractId/pdf", async (req, res, next) => {
+router.get("/:organizationId/contracts/:contractId/pdf", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const userId = req.user?.id;
     const organizationId = req.params.organizationId;
@@ -1546,7 +1547,7 @@ router.get("/:organizationId/contracts/:contractId/pdf", async (req, res, next) 
   }
 });
 
-router.post("/:organizationId/contracts/:contractId/send-sign-link", async (req, res, next) => {
+router.post("/:organizationId/contracts/:contractId/send-sign-link", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const userId = req.user?.id;
     const organizationId = req.params.organizationId;
@@ -1631,7 +1632,7 @@ router.post("/:organizationId/contracts/:contractId/send-sign-link", async (req,
   }
 });
 
-router.post("/", async (req, res, next) => {
+router.post("/", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const userId = req.user?.id;
     const payload = createOrganizationSchema.parse(req.body);
@@ -1714,7 +1715,7 @@ router.post("/", async (req, res, next) => {
   }
 });
 
-router.post("/send-credentials", async (req, res, next) => {
+router.post("/send-credentials", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const payload = sendCredentialsSchema.parse(req.body);
 
