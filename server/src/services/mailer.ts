@@ -10,6 +10,10 @@ const getTransporter = () => {
   }
 
   if (!transporter) {
+    if (config.isProd) {
+      dns.setDefaultResultOrder("ipv4first");
+    }
+
     console.info("[mailer] Initializing transporter", {
       host: config.smtpHost,
       port: config.smtpPort,
@@ -27,10 +31,6 @@ const getTransporter = () => {
       connectionTimeout: 10000,
       greetingTimeout: 10000,
       socketTimeout: 15000,
-      lookup: (hostname, options, callback) => {
-        const opts = typeof options === "number" ? { family: options } : options;
-        return dns.lookup(hostname, { ...opts, family: 4, all: false }, callback);
-      },
       tls: {
         rejectUnauthorized: true
       },
