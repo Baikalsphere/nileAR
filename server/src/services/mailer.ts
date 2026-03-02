@@ -1,11 +1,33 @@
 import nodemailer from "nodemailer";
+import { Resend } from "resend";
 import { config } from "../config.js";
 
 let transporter: nodemailer.Transporter | null = null;
+let resendClient: Resend | null = null;
+
+type SendMailPayload = {
+  to: string;
+  cc?: string;
+  subject: string;
+  text: string;
+  html: string;
+};
+
+const getResendClient = () => {
+  if (!config.mailEnabled || config.mailProvider !== "resend" || !config.resendApiKey || !config.resendFrom) {
+    throw new Error("Resend email service is not configured on the server");
+  }
+
+  if (!resendClient) {
+    resendClient = new Resend(config.resendApiKey);
+  }
+
+  return resendClient;
+};
 
 const getTransporter = () => {
-  if (!config.mailEnabled) {
-    throw new Error("Email service is not configured on the server");
+  if (!config.mailEnabled || config.mailProvider !== "smtp") {
+    throw new Error("SMTP email service is not configured on the server");
   }
 
   if (!transporter) {
@@ -39,16 +61,47 @@ const getTransporter = () => {
   return transporter;
 };
 
+const sendMail = async (payload: SendMailPayload) => {
+  if (!config.mailEnabled || !config.mailProvider) {
+    throw new Error("Email service is not configured on the server");
+  }
+
+  if (config.mailProvider === "resend") {
+    const resend = getResendClient();
+    const { error } = await resend.emails.send({
+      from: config.resendFrom!,
+      to: [payload.to],
+      cc: payload.cc ? [payload.cc] : undefined,
+      subject: payload.subject,
+      text: payload.text,
+      html: payload.html
+    });
+
+    if (error) {
+      throw new Error(`Resend send failed: ${error.message}`);
+    }
+
+    return;
+  }
+
+  const tx = getTransporter();
+  await tx.sendMail({
+    from: config.smtpFrom,
+    to: payload.to,
+    cc: payload.cc,
+    subject: payload.subject,
+    text: payload.text,
+    html: payload.html
+  });
+};
+
 export const sendCorporateCredentialsEmail = async (payload: {
   recipientEmail: string;
   organizationName: string;
   userId: string;
   password: string;
 }) => {
-  const tx = getTransporter();
-
-  await tx.sendMail({
-    from: config.smtpFrom,
+  await sendMail({
     to: payload.recipientEmail,
     subject: `Corporate Portal Credentials - ${payload.organizationName}`,
     text: [
@@ -76,10 +129,7 @@ export const sendHotelCredentialsEmail = async (payload: {
   userId: string;
   password: string;
 }) => {
-  const tx = getTransporter();
-
-  await tx.sendMail({
-    from: config.smtpFrom,
+  await sendMail({
     to: payload.recipientEmail,
     subject: `Hotel Finance Credentials - ${payload.hotelName}`,
     text: [
@@ -109,10 +159,7 @@ export const sendContractSignatureLinkEmail = async (payload: {
   hotelName: string;
   signLink: string;
 }) => {
-  const tx = getTransporter();
-
-  await tx.sendMail({
-    from: config.smtpFrom,
+  await sendMail({
     to: payload.recipientEmail,
     subject: `Contract Signature Request - ${payload.organizationName}`,
     text: [
@@ -148,8 +195,6 @@ export const sendCorporateInvoiceCoverLetterEmail = async (payload: {
   bills: Array<{ category: string; fileName: string }>;
   invoicesPortalLink: string;
 }) => {
-  const tx = getTransporter();
-
   const billsText = payload.bills.length
     ? payload.bills.map((bill, index) => `${index + 1}. ${bill.category} — ${bill.fileName}`).join("\n")
     : "No supporting bills attached";
@@ -160,8 +205,7 @@ export const sendCorporateInvoiceCoverLetterEmail = async (payload: {
         .join("")}</ul>`
     : `<p>No supporting bills attached.</p>`;
 
-  await tx.sendMail({
-    from: config.smtpFrom,
+  await sendMail({
     to: payload.recipientEmail,
     cc: payload.ccEmail ?? undefined,
     subject: `Invoice ${payload.invoiceNumber} - ${payload.organizationName}`,
@@ -213,10 +257,7 @@ export const sendBookingRequestHotelNotificationEmail = async (payload: {
   checkOutDate: string;
   totalPrice: number;
 }) => {
-  const tx = getTransporter();
-
-  await tx.sendMail({
-    from: config.smtpFrom,
+  await sendMail({
     to: payload.recipientEmail,
     subject: `New Booking Request - ${payload.organizationName}`,
     text: [
@@ -259,10 +300,7 @@ export const sendBookingRequestAcceptedOrganizationEmail = async (payload: {
   checkInDate: string;
   checkOutDate: string;
 }) => {
-  const tx = getTransporter();
-
-  await tx.sendMail({
-    from: config.smtpFrom,
+  await sendMail({
     to: payload.recipientEmail,
     subject: `Booking Request Accepted - ${payload.bookingNumber}`,
     text: [

@@ -14,12 +14,15 @@ const envSchema = z.object({
   REFRESH_TOKEN_TTL: z.string().default("7d"),
   BCRYPT_COST: z.coerce.number().int().min(10).max(15).default(12),
   CORS_ORIGINS: z.string().default("http://localhost:3000"),
+  MAIL_PROVIDER: z.enum(["auto", "smtp", "resend"]).default("auto"),
   SMTP_HOST: z.string().min(1).optional(),
   SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(587),
   SMTP_SECURE: z.enum(["true", "false"]).default("false"),
   SMTP_USER: z.string().min(1).optional(),
   SMTP_PASS: z.string().min(1).optional(),
   SMTP_FROM: z.string().email().optional(),
+  RESEND_API_KEY: z.string().min(1).optional(),
+  RESEND_FROM: z.string().email().optional(),
   ADMIN_PROVISIONING_SECRET: z.string().min(16).optional(),
   CLOUDINARY_CLOUD_NAME: z.string().min(1).optional(),
   CLOUDINARY_API_KEY: z.string().min(1).optional(),
@@ -39,6 +42,30 @@ if (!parsed.success) {
 
 const env = parsed.data;
 const corsOrigins = env.CORS_ORIGINS.split(",").map((origin) => origin.trim()).filter(Boolean);
+const smtpConfigured = Boolean(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS && env.SMTP_FROM);
+const resendConfigured = Boolean(env.RESEND_API_KEY && env.RESEND_FROM);
+
+const resolveMailProvider = (): "smtp" | "resend" | null => {
+  if (env.MAIL_PROVIDER === "smtp") {
+    return smtpConfigured ? "smtp" : null;
+  }
+
+  if (env.MAIL_PROVIDER === "resend") {
+    return resendConfigured ? "resend" : null;
+  }
+
+  if (resendConfigured) {
+    return "resend";
+  }
+
+  if (smtpConfigured) {
+    return "smtp";
+  }
+
+  return null;
+};
+
+const mailProvider = resolveMailProvider();
 
 const normalizeDatabaseUrl = (databaseUrl: string) => {
   try {
@@ -66,12 +93,15 @@ export const config = {
   refreshTokenTtl: env.REFRESH_TOKEN_TTL,
   bcryptCost: env.BCRYPT_COST,
   corsOrigins,
+  mailProvider,
   smtpHost: env.SMTP_HOST,
   smtpPort: env.SMTP_PORT,
   smtpSecure: env.SMTP_SECURE === "true",
   smtpUser: env.SMTP_USER,
   smtpPass: env.SMTP_PASS,
   smtpFrom: env.SMTP_FROM,
+  resendApiKey: env.RESEND_API_KEY,
+  resendFrom: env.RESEND_FROM,
   adminProvisioningSecret: env.ADMIN_PROVISIONING_SECRET,
   cloudinaryCloudName: env.CLOUDINARY_CLOUD_NAME,
   cloudinaryApiKey: env.CLOUDINARY_API_KEY,
@@ -82,6 +112,6 @@ export const config = {
   supabaseServiceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY,
   supabaseStorageBucket: env.SUPABASE_STORAGE_BUCKET,
   supabaseStorageEnabled: Boolean(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY),
-  mailEnabled: Boolean(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS && env.SMTP_FROM),
+  mailEnabled: Boolean(mailProvider),
   isProd: env.NODE_ENV === "production"
 };
