@@ -665,10 +665,11 @@ router.post("/admin/hotel-accounts", async (req, res, next) => {
       error?.code === "EAUTH" ||
       error?.code === "ETIMEDOUT" ||
       error?.code === "ESOCKET" ||
-      error?.code === "ECONNECTION"
+      error?.code === "ECONNECTION" ||
+      error?.code === "ERESEND"
     ) {
       const details = [error?.code, error?.responseCode].filter(Boolean).join("/");
-      return res.status(502).json({ error: { message: `Failed to send credentials email. Check SMTP configuration on server.${details ? ` (${details})` : ""}` } });
+      return res.status(502).json({ error: { message: `Failed to send credentials email. Check mail provider configuration on server.${details ? ` (${details})` : ""}` } });
     }
 
     return next(error);
