@@ -596,6 +596,11 @@ router.post("/admin/hotel-accounts", async (req, res, next) => {
     const generatedPassword = createGeneratedHotelPassword();
     const passwordHash = await bcrypt.hash(generatedPassword, config.bcryptCost);
     const client: PoolClient = await pool.connect();
+    let createdUser: {
+      id: string;
+      email: string;
+      role: string;
+    } | null = null;
 
     try {
       await client.query("BEGIN");
@@ -607,7 +612,7 @@ router.post("/admin/hotel-accounts", async (req, res, next) => {
         [normalizedEmail, passwordHash, normalizedFullName, "hotel_finance_user"]
       );
 
-      const createdUser = createdUserResult.rows[0] as {
+      createdUser = createdUserResult.rows[0] as {
         id: string;
         email: string;
         role: string;
@@ -623,30 +628,51 @@ router.post("/admin/hotel-accounts", async (req, res, next) => {
         [createdUser.id, normalizedHotelName, normalizedEmail]
       );
 
-      await sendHotelCredentialsEmail({
-        recipientEmail: normalizedEmail,
-        hotelName: normalizedHotelName,
-        userId: normalizedEmail,
-        password: generatedPassword
-      });
-
       await client.query("COMMIT");
-
-      return res.status(201).json({
-        account: {
-          id: createdUser.id,
-          email: createdUser.email,
-          role: createdUser.role,
-          hotelName: normalizedHotelName
-        },
-        message: "Hotel account created and credentials sent to registered email"
-      });
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
     } finally {
       client.release();
     }
+
+    if (!createdUser) {
+      throw new Error("Failed to create hotel account");
+    }
+
+    let credentialsEmailSent = true;
+
+    try {
+      await sendHotelCredentialsEmail({
+        recipientEmail: normalizedEmail,
+        hotelName: normalizedHotelName,
+        userId: normalizedEmail,
+        password: generatedPassword
+      });
+    } catch (error: any) {
+      credentialsEmailSent = false;
+      console.error("[mailer] Failed to send hotel credentials email", {
+        code: error?.code,
+        responseCode: error?.responseCode,
+        command: error?.command,
+        response: error?.response,
+        message: error?.message,
+        stack: error?.stack
+      });
+    }
+
+    return res.status(201).json({
+      account: {
+        id: createdUser.id,
+        email: createdUser.email,
+        role: createdUser.role,
+        hotelName: normalizedHotelName
+      },
+      message: credentialsEmailSent
+        ? "Hotel account created and credentials sent to registered email"
+        : "Hotel account created, but credentials email could not be sent. Share credentials manually and retry email later.",
+      credentialsEmailSent
+    });
   } catch (error: any) {
     console.error("[mailer] Failed to send hotel credentials email", {
       code: error?.code,
@@ -659,16 +685,6 @@ router.post("/admin/hotel-accounts", async (req, res, next) => {
 
     if (error?.code === "23505") {
       return res.status(409).json({ error: { message: "Email already registered" } });
-    }
-
-    if (
-      error?.code === "EAUTH" ||
-      error?.code === "ETIMEDOUT" ||
-      error?.code === "ESOCKET" ||
-      error?.code === "ECONNECTION"
-    ) {
-      const details = [error?.code, error?.responseCode].filter(Boolean).join("/");
-      return res.status(502).json({ error: { message: `Failed to send credentials email. Check SMTP configuration on server.${details ? ` (${details})` : ""}` } });
     }
 
     return next(error);
