@@ -1,4 +1,5 @@
 import nodemailer from "nodemailer";
+import dns from "node:dns";
 import { config } from "../config.js";
 
 let transporter: nodemailer.Transporter | null = null;
@@ -26,6 +27,10 @@ const getTransporter = () => {
       connectionTimeout: 10000,
       greetingTimeout: 10000,
       socketTimeout: 15000,
+      lookup: (hostname, options, callback) => {
+        const opts = typeof options === "number" ? { family: options } : options;
+        return dns.lookup(hostname, { ...opts, family: 4, all: false }, callback);
+      },
       tls: {
         rejectUnauthorized: true
       },
