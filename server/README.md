@@ -23,24 +23,14 @@ Node.js + PostgreSQL backend for the Hotel Finance portal.
 - `POST /api/organizations` (requires `corporateEmail`; generated corporate `userId` is this email)
 - `POST /api/organizations/send-credentials` (emails generated credentials to corporate email)
 
-## Mail configuration
-Set these in `.env` to enable credential email sending.
-
-Provider selection:
-- `MAIL_PROVIDER` (`smtp` or `resend`, default `smtp`)
-- `SMTP_FROM` (sender email, required for both providers)
-
-If `MAIL_PROVIDER=smtp`:
+## SMTP configuration
+Set these in `.env` to enable credential email sending:
 - `SMTP_HOST`
 - `SMTP_PORT` (default `587`)
 - `SMTP_SECURE` (`true`/`false`, default `false`)
 - `SMTP_USER`
 - `SMTP_PASS`
-
-If `MAIL_PROVIDER=resend`:
-- `RESEND_API_KEY`
-
-For cloud deployments where Gmail SMTP times out, prefer `MAIL_PROVIDER=resend` since it uses HTTPS API delivery instead of raw SMTP.
+- `SMTP_FROM` (sender email)
 
 Corporate first-time setup behavior:
 - First login should use generated corporate `userId` + generated password.
