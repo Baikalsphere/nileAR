@@ -973,13 +973,18 @@ router.post("/hotel/profile/logo", hotelLogoUpload.single("file"), async (req, r
     });
   } catch (error: any) {
     const message = error instanceof Error ? error.message : "Failed to upload hotel logo";
+    const loweredMessage = message.toLowerCase();
 
-    if (message.toLowerCase().includes("supabase upload failed")) {
-      return res.status(502).json({ error: { message } });
+    if (loweredMessage.includes("bucket") && loweredMessage.includes("not")) {
+      return res.status(500).json({ error: { message: "Supabase bucket is missing. Create the storage bucket and retry." } });
     }
 
-    if (message.toLowerCase().includes("bucket") && message.toLowerCase().includes("not")) {
-      return res.status(500).json({ error: { message: "Supabase bucket is missing. Create the storage bucket and retry." } });
+    if (loweredMessage.includes("fetch failed") || loweredMessage.includes("network") || loweredMessage.includes("timeout")) {
+      return res.status(503).json({ error: { message: "Supabase storage is temporarily unreachable. Please retry in a few seconds." } });
+    }
+
+    if (loweredMessage.includes("supabase upload failed")) {
+      return res.status(502).json({ error: { message } });
     }
 
     return next(error);

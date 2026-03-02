@@ -434,6 +434,8 @@ router.get("/dashboard/summary", async (req, res, next) => {
     const invoices = result.rows.map((row) => {
       const amount = Number(row.amount ?? 0);
       const invoiceDate = row.invoice_date ? new Date(row.invoice_date) : null;
+      const sentAt = row.sent_at ? new Date(row.sent_at) : null;
+      const invoicedAt = sentAt && !Number.isNaN(sentAt.getTime()) ? sentAt : invoiceDate;
       const dueDate = row.due_date ? new Date(row.due_date) : null;
       const status = String(row.status ?? "").toLowerCase();
       const organizationName = row.organization_name ? String(row.organization_name) : "Unknown";
@@ -445,6 +447,8 @@ router.get("/dashboard/summary", async (req, res, next) => {
         amount,
         status,
         invoiceDate,
+        sentAt,
+        invoicedAt,
         dueDate,
         organizationName,
         isOutstanding,
@@ -465,7 +469,7 @@ router.get("/dashboard/summary", async (req, res, next) => {
     };
 
     const totalInvoicedMtd = invoices
-      .filter((invoice) => isInCurrentMonth(invoice.invoiceDate))
+      .filter((invoice) => isInCurrentMonth(invoice.invoicedAt))
       .reduce((sum, invoice) => sum + invoice.amount, 0);
 
     const totalCollected = invoices
@@ -492,7 +496,7 @@ router.get("/dashboard/summary", async (req, res, next) => {
       };
 
       const invoiced = invoices
-        .filter((invoice) => inWeek(invoice.invoiceDate))
+        .filter((invoice) => inWeek(invoice.invoicedAt))
         .reduce((sum, invoice) => sum + invoice.amount, 0);
 
       const collected = invoices
