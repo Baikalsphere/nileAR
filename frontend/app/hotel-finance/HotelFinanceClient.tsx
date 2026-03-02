@@ -55,7 +55,7 @@ export default function HotelFinanceClient() {
     `₹${Math.round(amount).toLocaleString('en-IN')}`
 
   const summary = dashboardData?.summary ?? {
-    totalInvoicedMtd: 0,
+    totalInvoiced: 0,
     totalCollected: 0,
     totalOutstanding: 0,
     overdueInvoices: 0
@@ -194,11 +194,11 @@ export default function HotelFinanceClient() {
                   <div className="p-2 bg-blue-50 dark:bg-blue-900/20 rounded-lg text-primary">
                     <span className="material-symbols-outlined">receipt</span>
                   </div>
-                  <span className="flex items-center text-xs font-bold text-success bg-success/10 px-2 py-1 rounded-full">MTD</span>
+                  <span className="flex items-center text-xs font-bold text-success bg-success/10 px-2 py-1 rounded-full">All Time</span>
                 </div>
-                <p className="text-text-sub-light dark:text-text-sub-dark text-sm font-medium">Total Invoiced (MTD)</p>
+                <p className="text-text-sub-light dark:text-text-sub-dark text-sm font-medium">Total Invoiced</p>
                 <h3 className="text-2xl font-bold text-text-main-light dark:text-text-main-dark mt-1">
-                  {isLoading ? '...' : formatCurrency(summary.totalInvoicedMtd)}
+                  {isLoading ? '...' : formatCurrency(summary.totalInvoiced)}
                 </h3>
               </div>
               

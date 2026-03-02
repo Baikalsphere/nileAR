@@ -468,8 +468,7 @@ router.get("/dashboard/summary", async (req, res, next) => {
       return date.getFullYear() === currentYear && date.getMonth() === currentMonth;
     };
 
-    const totalInvoicedMtd = invoices
-      .filter((invoice) => isInCurrentMonth(invoice.invoicedAt))
+    const totalInvoiced = invoices
       .reduce((sum, invoice) => sum + invoice.amount, 0);
 
     const totalCollected = invoices
@@ -561,7 +560,7 @@ router.get("/dashboard/summary", async (req, res, next) => {
 
     return res.status(200).json({
       summary: {
-        totalInvoicedMtd,
+        totalInvoiced,
         totalCollected,
         totalOutstanding,
         overdueInvoices

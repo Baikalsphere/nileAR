@@ -4,7 +4,7 @@ import { ChangeEvent, FormEvent, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Header from '@/app/components/Header'
 import Sidebar from '@/app/components/Sidebar'
-import { fetchHotelProfile, tokenStorage, updateHotelProfile, uploadHotelLogo } from '@/lib/auth'
+import { changeHotelPassword, fetchHotelProfile, tokenStorage, updateHotelProfile, uploadHotelLogo } from '@/lib/auth'
 
 export default function HotelProfileClient() {
   const router = useRouter()
@@ -24,6 +24,14 @@ export default function HotelProfileClient() {
   const [contactEmail, setContactEmail] = useState('')
   const [contactPhone, setContactPhone] = useState('')
   const [address, setAddress] = useState('')
+  const [isChangingPassword, setIsChangingPassword] = useState(false)
+  const [passwordError, setPasswordError] = useState<string | null>(null)
+  const [passwordSuccess, setPasswordSuccess] = useState<string | null>(null)
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: '',
+    newPassword: '',
+    confirmPassword: ''
+  })
 
   useEffect(() => {
     return () => {
@@ -172,6 +180,61 @@ export default function HotelProfileClient() {
     }
 
     setIsLogoLoadFailed(true)
+  }
+
+  const handlePasswordSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setPasswordError(null)
+    setPasswordSuccess(null)
+
+    const { currentPassword, newPassword, confirmPassword } = passwordForm
+    if (!currentPassword) {
+      setPasswordError('Current password is required.')
+      return
+    }
+
+    if (newPassword.length < 12 || confirmPassword.length < 12) {
+      setPasswordError('New password and confirmation must be at least 12 characters.')
+      return
+    }
+
+    const hasComplexity = [
+      /[a-z]/.test(newPassword),
+      /[A-Z]/.test(newPassword),
+      /[0-9]/.test(newPassword),
+      /[^A-Za-z0-9]/.test(newPassword)
+    ].every(Boolean)
+
+    if (!hasComplexity) {
+      setPasswordError('Password must include upper, lower, number, and symbol characters.')
+      return
+    }
+
+    if (newPassword !== confirmPassword) {
+      setPasswordError('New password and confirm password must match.')
+      return
+    }
+
+    setIsChangingPassword(true)
+    try {
+      await changeHotelPassword({
+        currentPassword,
+        newPassword,
+        confirmPassword
+      })
+
+      setPasswordForm({
+        currentPassword: '',
+        newPassword: '',
+        confirmPassword: ''
+      })
+      setPasswordSuccess('Password changed successfully.')
+    } catch (passwordSubmitError) {
+      const message = passwordSubmitError instanceof Error ? passwordSubmitError.message : 'Failed to change password'
+      setPasswordError(message)
+    } finally {
+      setIsChangingPassword(false)
+    }
   }
 
   const visibleLogoUrl = logoPreviewUrl ?? logoUrl
@@ -323,6 +386,73 @@ export default function HotelProfileClient() {
                   <span className="material-symbols-outlined text-[18px]">save</span>
                   {isSaving ? 'Saving...' : 'Save Profile'}
                 </button>
+              </div>
+            </form>
+
+            <form onSubmit={handlePasswordSubmit} className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+              <div className="flex flex-col gap-4">
+                <div>
+                  <h2 className="text-xl font-bold text-text-main-light dark:text-text-main-dark">Change Password</h2>
+                  <p className="mt-1 text-sm text-text-sub-light dark:text-text-sub-dark">Update your hotel finance account password.</p>
+                </div>
+
+                {passwordError && (
+                  <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/30 dark:bg-red-900/10 dark:text-red-300">
+                    {passwordError}
+                  </div>
+                )}
+
+                {passwordSuccess && (
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700 dark:border-emerald-900/30 dark:bg-emerald-900/10 dark:text-emerald-300">
+                    {passwordSuccess}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label className="mb-1 block text-sm font-semibold text-text-main-light dark:text-text-main-dark">Current Password</label>
+                    <input
+                      type="password"
+                      value={passwordForm.currentPassword}
+                      onChange={(event) => setPasswordForm((prev) => ({ ...prev, currentPassword: event.target.value }))}
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                      placeholder="Enter current password"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-semibold text-text-main-light dark:text-text-main-dark">New Password</label>
+                    <input
+                      type="password"
+                      value={passwordForm.newPassword}
+                      onChange={(event) => setPasswordForm((prev) => ({ ...prev, newPassword: event.target.value }))}
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                      placeholder="Enter new password"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-semibold text-text-main-light dark:text-text-main-dark">Confirm Password</label>
+                    <input
+                      type="password"
+                      value={passwordForm.confirmPassword}
+                      onChange={(event) => setPasswordForm((prev) => ({ ...prev, confirmPassword: event.target.value }))}
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                      placeholder="Confirm new password"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-end">
+                  <button
+                    type="submit"
+                    disabled={isChangingPassword}
+                    className="inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">password</span>
+                    {isChangingPassword ? 'Changing...' : 'Change Password'}
+                  </button>
+                </div>
               </div>
             </form>
           </div>

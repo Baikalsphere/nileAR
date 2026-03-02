@@ -130,7 +130,7 @@ export interface BookingBill {
 }
 
 export interface DashboardSummary {
-  totalInvoicedMtd: number
+  totalInvoiced: number
   totalCollected: number
   totalOutstanding: number
   overdueInvoices: number

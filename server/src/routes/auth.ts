@@ -111,6 +111,36 @@ const corporateSetPasswordSchema = z.object({
   }
 });
 
+const hotelChangePasswordSchema = z.object({
+  currentPassword: z.string().min(1).max(128),
+  newPassword: z.string().min(12).max(128),
+  confirmPassword: z.string().min(12).max(128)
+}).superRefine((value, ctx) => {
+  if (value.newPassword !== value.confirmPassword) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["confirmPassword"],
+      message: "Passwords do not match"
+    });
+  }
+
+  const password = value.newPassword;
+  const checks = [
+    /[a-z]/.test(password),
+    /[A-Z]/.test(password),
+    /[0-9]/.test(password),
+    /[^A-Za-z0-9]/.test(password)
+  ];
+
+  if (checks.some((ok) => !ok)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["newPassword"],
+      message: "Password must include upper, lower, number, and symbol characters"
+    });
+  }
+});
+
 const corporateEmployeeSchema = z.object({
   fullName: z.string().min(2).max(160),
   employeeCode: z.string().min(2).max(40),
@@ -1065,6 +1095,56 @@ router.put("/hotel/profile", async (req, res, next) => {
       return res.status(409).json({ error: { message: "Contact email is already in use" } });
     }
 
+    return next(error);
+  }
+});
+
+router.post("/hotel/change-password", async (req, res, next) => {
+  try {
+    const payload = getHotelPayload(req, res);
+    if (!payload) {
+      return;
+    }
+
+    const { currentPassword, newPassword } = hotelChangePasswordSchema.parse(req.body);
+
+    const userResult = await query(
+      `SELECT id, password_hash, is_active
+       FROM users
+       WHERE id = $1
+       LIMIT 1`,
+      [payload.sub]
+    );
+
+    if (userResult.rowCount === 0) {
+      await bcrypt.compare(currentPassword, DUMMY_PASSWORD_HASH);
+      return res.status(401).json({ error: { message: "Unauthorized" } });
+    }
+
+    const user = userResult.rows[0];
+    if (!user.is_active) {
+      await bcrypt.compare(currentPassword, DUMMY_PASSWORD_HASH);
+      return res.status(403).json({ error: { message: "Account disabled" } });
+    }
+
+    const isCurrentPasswordValid = await bcrypt.compare(currentPassword, user.password_hash);
+    if (!isCurrentPasswordValid) {
+      return res.status(401).json({ error: { message: "Current password is incorrect" } });
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, config.bcryptCost);
+
+    await query(
+      `UPDATE users
+       SET password_hash = $2,
+           failed_login_attempts = 0,
+           locked_until = NULL
+       WHERE id = $1`,
+      [payload.sub, passwordHash]
+    );
+
+    return res.status(200).json({ ok: true });
+  } catch (error) {
     return next(error);
   }
 });

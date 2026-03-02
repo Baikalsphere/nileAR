@@ -257,6 +257,20 @@ export const uploadHotelLogo = async (file: File) => {
   };
 };
 
+export const changeHotelPassword = async (payload: {
+  currentPassword: string;
+  newPassword: string;
+  confirmPassword: string;
+}) => {
+  return request<{ ok: boolean }>("/api/auth/hotel/change-password", {
+    method: "POST",
+    headers: {
+      ...getAuthHeaders()
+    },
+    body: JSON.stringify(payload)
+  });
+};
+
 export const createHotelAccountByAdmin = async (payload: {
   email: string;
   hotelName: string;
