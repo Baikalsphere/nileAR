@@ -130,39 +130,74 @@ export interface BookingBill {
 }
 
 export interface DashboardSummary {
-  totalInvoiced: number
+  totalRevenue: number
   totalCollected: number
-  totalOutstanding: number
-  overdueInvoices: number
+  totalPending: number
+  activeBookings: number
 }
 
-export interface DashboardInvoiceVsCollectionPoint {
+export interface DashboardBookingTrendPoint {
   label: string
-  invoiced: number
-  collected: number
+  booked: number
+  completed: number
 }
 
-export interface DashboardAgingBucket {
+export interface DashboardStatusBucket {
   label: string
-  amount: number
+  count: number
   percentage: number
 }
 
-export interface DashboardAging {
-  totalDue: number
-  buckets: DashboardAgingBucket[]
+export interface DashboardStatusBreakdown {
+  total: number
+  buckets: DashboardStatusBucket[]
 }
 
-export interface DashboardOrganizationOutstanding {
+export interface DashboardOrganizationRevenue {
   name: string
   amount: number
 }
 
 export interface HotelFinanceDashboardResponse {
   summary: DashboardSummary
-  invoiceVsCollection: DashboardInvoiceVsCollectionPoint[]
-  aging: DashboardAging
-  topOrganizationsOutstanding: DashboardOrganizationOutstanding[]
+  bookingTrend: DashboardBookingTrendPoint[]
+  statusBreakdown: DashboardStatusBreakdown
+  topOrganizations: DashboardOrganizationRevenue[]
+}
+
+export interface ReportRevenueData {
+  month: string
+  roomRevenue: number
+  incidentals: number
+  total: number
+}
+
+export interface ReportRoomPerformance {
+  roomType: string
+  occupancy: number
+  revenue: number
+  avgDailyRate: number
+  nights: number
+}
+
+export interface ReportCorporateClient {
+  name: string
+  totalBookings: number
+  totalSpent: number
+  occupiedNights: number
+  avgBookingValue: number
+  paymentStatus: 'paid' | 'pending' | 'overdue'
+}
+
+export interface HotelFinanceReportsResponse {
+  revenueData: ReportRevenueData[]
+  roomPerformance: ReportRoomPerformance[]
+  corporateClients: ReportCorporateClient[]
+  kpi: {
+    totalRevenue: number
+    totalBookings: number
+    avgDailyRate: number
+  }
 }
 
 export const fetchBookingOrganizations = async () => {
@@ -173,6 +208,12 @@ export const fetchBookingOrganizations = async () => {
 
 export const fetchHotelFinanceDashboardSummary = async () => {
   return request<HotelFinanceDashboardResponse>("/api/bookings/dashboard/summary", {
+    method: "GET"
+  })
+}
+
+export const fetchHotelFinanceReports = async () => {
+  return request<HotelFinanceReportsResponse>("/api/bookings/reports", {
     method: "GET"
   })
 }

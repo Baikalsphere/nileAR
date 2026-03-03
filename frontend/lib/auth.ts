@@ -2,6 +2,10 @@ export interface AuthUser {
   id: string;
   email: string;
   role: string;
+  isSubUser?: boolean;
+  portalUserId?: string;
+  fullName?: string;
+  allowedPages?: string[];
 }
 
 export interface AuthResponse {
@@ -165,6 +169,11 @@ export const login = async (email: string, password: string) => {
   });
 
   tokenStorage.set(result.accessToken);
+  setUserRoleInStorage({
+    role: result.user.role || "admin",
+    isSubUser: result.user.isSubUser || false,
+    allowedPages: result.user.allowedPages || []
+  });
   return result;
 };
 
@@ -201,6 +210,15 @@ export const fetchHotelProfile = async () => {
       ...getAuthHeaders()
     }
   });
+
+  // Keep user meta in sync on every profile fetch
+  if (response.user) {
+    setUserRoleInStorage({
+      role: response.user.role || "admin",
+      isSubUser: response.user.isSubUser || false,
+      allowedPages: response.user.allowedPages || []
+    });
+  }
 
   return {
     ...response,
@@ -296,4 +314,92 @@ export const createHotelAccountBySecret = async (
     method: "POST",
     body: JSON.stringify(payload)
   });
+};
+
+// ══════════════════════════════════════════════════════════════
+// Portal User Management
+// ══════════════════════════════════════════════════════════════
+
+export interface PortalUser {
+  id: string;
+  full_name: string;
+  email: string;
+  role: string;
+  allowed_pages: string[];
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PortalUserPayload {
+  fullName: string;
+  email: string;
+  role: "admin" | "user";
+  allowedPages: string[];
+}
+
+export interface PortalUserUpdatePayload {
+  fullName?: string;
+  role?: "admin" | "user";
+  allowedPages?: string[];
+  isActive?: boolean;
+}
+
+export const fetchHotelUsers = async () => {
+  return request<{ users: PortalUser[] }>("/api/auth/hotel/users", {
+    method: "GET",
+    headers: { ...getAuthHeaders() }
+  });
+};
+
+export const createHotelUser = async (payload: PortalUserPayload) => {
+  return request<{ user: PortalUser }>("/api/auth/hotel/users", {
+    method: "POST",
+    headers: { ...getAuthHeaders() },
+    body: JSON.stringify(payload)
+  });
+};
+
+export const updateHotelUser = async (userId: string, payload: PortalUserUpdatePayload) => {
+  return request<{ user: PortalUser }>(`/api/auth/hotel/users/${userId}`, {
+    method: "PUT",
+    headers: { ...getAuthHeaders() },
+    body: JSON.stringify(payload)
+  });
+};
+
+export const deleteHotelUser = async (userId: string) => {
+  return request<{ ok: boolean }>(`/api/auth/hotel/users/${userId}`, {
+    method: "DELETE",
+    headers: { ...getAuthHeaders() }
+  });
+};
+
+export const changePortalUserPassword = async (payload: {
+  currentPassword: string;
+  newPassword: string;
+  confirmPassword: string;
+}) => {
+  return request<{ ok: boolean }>("/api/auth/hotel/user/change-password", {
+    method: "POST",
+    headers: { ...getAuthHeaders() },
+    body: JSON.stringify(payload)
+  });
+};
+
+export const getUserRoleFromStorage = (): { role: string; isSubUser: boolean; allowedPages: string[] } => {
+  if (typeof window === "undefined") return { role: "admin", isSubUser: false, allowedPages: [] };
+  const data = window.sessionStorage.getItem("hf_user_meta");
+  if (!data) return { role: "admin", isSubUser: false, allowedPages: [] };
+  try {
+    return JSON.parse(data);
+  } catch {
+    return { role: "admin", isSubUser: false, allowedPages: [] };
+  }
+};
+
+export const setUserRoleInStorage = (meta: { role: string; isSubUser: boolean; allowedPages: string[] }) => {
+  if (typeof window !== "undefined") {
+    window.sessionStorage.setItem("hf_user_meta", JSON.stringify(meta));
+  }
 };

@@ -4,7 +4,7 @@ import { ChangeEvent, FormEvent, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Header from '@/app/components/Header'
 import Sidebar from '@/app/components/Sidebar'
-import { changeHotelPassword, fetchHotelProfile, tokenStorage, updateHotelProfile, uploadHotelLogo } from '@/lib/auth'
+import { changeHotelPassword, changePortalUserPassword, fetchHotelProfile, getUserRoleFromStorage, tokenStorage, updateHotelProfile, uploadHotelLogo } from '@/lib/auth'
 
 export default function HotelProfileClient() {
   const router = useRouter()
@@ -217,7 +217,7 @@ export default function HotelProfileClient() {
 
     setIsChangingPassword(true)
     try {
-      await changeHotelPassword({
+      await changePortalUserPassword({
         currentPassword,
         newPassword,
         confirmPassword

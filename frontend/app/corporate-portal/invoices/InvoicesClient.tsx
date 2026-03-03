@@ -221,6 +221,12 @@ export default function InvoicesClient() {
                       <tr>
                         <td colSpan={9} className="py-8 text-center text-sm text-slate-500 dark:text-gray-400">Loading invoices...</td>
                       </tr>
+                    ) : filteredInvoices.length === 0 ? (
+                      <tr>
+                        <td colSpan={9} className="py-10 text-center text-sm text-slate-500 dark:text-gray-400">
+                          {invoicesData.length === 0 ? 'No invoices found.' : 'No invoices match your filters.'}
+                        </td>
+                      </tr>
                     ) : filteredInvoices.map((invoice) => (
                       <tr key={invoice.id} className="group hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer" onClick={() => window.location.href = `/corporate-portal/invoices/${invoice.invoiceNumber}`}>
                         <td className="py-3 pl-5 pr-2" onClick={(e) => e.stopPropagation()}>
@@ -272,20 +278,7 @@ export default function InvoicesClient() {
               {/* Pagination */}
               <div className="bg-white dark:bg-slate-800 border-t border-slate-200 dark:border-gray-700 px-6 py-4 flex items-center justify-between">
                 <div className="text-sm text-slate-600 dark:text-gray-400">
-                  Showing <span className="font-bold text-slate-900 dark:text-white">1-{filteredInvoices.length}</span> of <span className="font-bold text-slate-900 dark:text-white">48</span> invoices
-                </div>
-                <div className="flex items-center gap-2">
-                  <button className="p-2 rounded-lg border border-slate-200 dark:border-gray-700 text-slate-500 hover:text-primary hover:border-primary disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
-                    <span className="material-symbols-outlined text-[20px]">chevron_left</span>
-                  </button>
-                  <button className="size-9 rounded-lg bg-primary text-white font-bold text-sm shadow-sm shadow-primary/30">1</button>
-                  <button className="size-9 rounded-lg border border-slate-200 dark:border-gray-700 text-slate-500 hover:border-primary hover:text-primary font-medium text-sm transition-colors">2</button>
-                  <button className="size-9 rounded-lg border border-slate-200 dark:border-gray-700 text-slate-500 hover:border-primary hover:text-primary font-medium text-sm transition-colors">3</button>
-                  <span className="text-gray-400 px-1">...</span>
-                  <button className="size-9 rounded-lg border border-slate-200 dark:border-gray-700 text-slate-500 hover:border-primary hover:text-primary font-medium text-sm transition-colors">10</button>
-                  <button className="p-2 rounded-lg border border-slate-200 dark:border-gray-700 text-slate-500 hover:text-primary hover:border-primary transition-colors">
-                    <span className="material-symbols-outlined text-[20px]">chevron_right</span>
-                  </button>
+                  Showing <span className="font-bold text-slate-900 dark:text-white">{filteredInvoices.length}</span> of <span className="font-bold text-slate-900 dark:text-white">{invoicesData.length}</span> invoices
                 </div>
               </div>
             </div>

@@ -215,10 +215,10 @@ export default function CorporateHotelBookingDetailClient({ hotelId }: { hotelId
                       <input required value={formData.bookingNumber} onChange={(event) => setFormData((previous) => ({ ...previous, bookingNumber: event.target.value }))} className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm focus:border-primary focus:outline-none dark:border-slate-700 dark:bg-slate-800" />
                     </div>
                     <div>
-                      <label className="mb-2 block text-sm font-semibold">Employee *</label>
+                      <label className="mb-2 block text-sm font-semibold">User *</label>
                       <select required value={formData.employeeId} onChange={(event) => setFormData((previous) => ({ ...previous, employeeId: event.target.value }))} className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm focus:border-primary focus:outline-none dark:border-slate-700 dark:bg-slate-800">
-                        <option value="">Select employee</option>
-                        {employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.fullName} ({employee.employeeCode})</option>)}
+                        <option value="">Select user</option>
+                        {employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.fullName} ({employee.email})</option>)}
                       </select>
                     </div>
                   </div>

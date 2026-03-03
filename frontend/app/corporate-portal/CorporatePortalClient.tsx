@@ -92,16 +92,16 @@ export default function CorporatePortalClient() {
   }), [hotels, searchQuery, filterStatus])
 
   const totals = useMemo(() => {
-    const totalOutstanding = hotels.reduce((sum, hotel) => sum + hotel.outstanding, 0)
-    const totalPendingInvoices = hotels.reduce((sum, hotel) => sum + hotel.pendingInvoices, 0)
+    const totalSpent = hotels.reduce((sum, hotel) => sum + hotel.totalSpent, 0)
+    const totalPendingAmount = hotels.reduce((sum, hotel) => sum + hotel.outstanding, 0)
     const totalActiveStays = hotels.reduce((sum, hotel) => sum + hotel.activeStays, 0)
-    const activeHotels = hotels.filter((hotel) => hotel.status === 'active').length
+    const totalBookings = hotels.reduce((sum, hotel) => sum + hotel.totalStays, 0)
 
     return {
-      totalOutstanding,
-      totalPendingInvoices,
+      totalSpent,
+      totalPendingAmount,
       totalActiveStays,
-      activeHotels
+      totalBookings
     }
   }, [hotels])
 
@@ -121,7 +121,7 @@ export default function CorporatePortalClient() {
             <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
               <div>
                 <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight text-slate-900 dark:text-white">Partner Hotels</h1>
-                <p className="text-slate-500 dark:text-slate-400 mt-2 text-base">Hotels that have onboarded your organization and shared invoice activity.</p>
+                <p className="text-slate-500 dark:text-slate-400 mt-2 text-base">Hotels that have onboarded your organization for corporate bookings.</p>
               </div>
               <button className="flex items-center justify-center gap-2 bg-primary hover:bg-blue-700 text-white px-5 py-3 rounded-lg shadow-sm transition-all hover:shadow-md shrink-0">
                 <span className="material-symbols-outlined text-[20px]">download</span>
@@ -138,35 +138,35 @@ export default function CorporatePortalClient() {
             <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
               <div className="flex flex-col p-6 rounded-xl bg-white dark:bg-[#1e293b] border border-slate-200 dark:border-slate-700 shadow-sm relative overflow-hidden group">
                 <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity text-primary">
-                  <span className="material-symbols-outlined text-6xl">account_balance_wallet</span>
+                  <span className="material-symbols-outlined text-6xl">payments</span>
                 </div>
-                <p className="text-slate-500 dark:text-slate-400 text-sm font-medium mb-1">Total Outstanding</p>
+                <p className="text-slate-500 dark:text-slate-400 text-sm font-medium mb-1">Total Spent</p>
                 <div className="flex items-end gap-2 mb-2">
-                  <h3 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">₹{totals.totalOutstanding.toLocaleString()}</h3>
+                  <h3 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">₹{totals.totalSpent.toLocaleString()}</h3>
                 </div>
-                <div className="flex items-center gap-1 text-red-600 dark:text-red-400 text-xs font-bold bg-red-50 dark:bg-red-900/20 w-fit px-2 py-1 rounded-full">
-                  <span className="material-symbols-outlined text-sm">pending_actions</span>
-                  <span>Across {totals.activeHotels} hotels</span>
+                <div className="flex items-center gap-1 text-primary dark:text-blue-400 text-xs font-bold bg-blue-50 dark:bg-blue-900/20 w-fit px-2 py-1 rounded-full">
+                  <span className="material-symbols-outlined text-sm">hotel</span>
+                  <span>Across {hotels.length} hotels</span>
                 </div>
               </div>
 
               <div className="flex flex-col p-6 rounded-xl bg-white dark:bg-[#1e293b] border border-slate-200 dark:border-slate-700 shadow-sm group">
                 <div className="flex justify-between items-start">
                   <div>
-                    <p className="text-slate-500 dark:text-slate-400 text-sm font-medium mb-1">Pending Invoices</p>
-                    <h3 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">{totals.totalPendingInvoices}</h3>
+                    <p className="text-slate-500 dark:text-slate-400 text-sm font-medium mb-1">Pending Amount</p>
+                    <h3 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">₹{totals.totalPendingAmount.toLocaleString()}</h3>
                   </div>
                   <div className="size-10 rounded-lg bg-orange-50 dark:bg-orange-900/20 text-orange-600 flex items-center justify-center">
-                    <span className="material-symbols-outlined">receipt_long</span>
+                    <span className="material-symbols-outlined">pending_actions</span>
                   </div>
                 </div>
-                <p className="text-xs text-slate-400 mt-4">Requires review & payment</p>
+                <p className="text-xs text-slate-400 mt-4">Active bookings in progress</p>
               </div>
 
               <div className="flex flex-col p-6 rounded-xl bg-white dark:bg-[#1e293b] border border-slate-200 dark:border-slate-700 shadow-sm group">
                 <div className="flex justify-between items-start">
                   <div>
-                    <p className="text-slate-500 dark:text-slate-400 text-sm font-medium mb-1">Active Employee Stays</p>
+                    <p className="text-slate-500 dark:text-slate-400 text-sm font-medium mb-1">Active Stays</p>
                     <h3 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">{totals.totalActiveStays}</h3>
                   </div>
                   <div className="size-10 rounded-lg bg-blue-50 dark:bg-blue-900/20 text-blue-600 flex items-center justify-center">
@@ -181,11 +181,11 @@ export default function CorporatePortalClient() {
                   <p className="text-slate-500 dark:text-slate-400 text-sm font-medium">Hotels Connected</p>
                   <span className="text-sm font-bold text-primary">{hotels.length}</span>
                 </div>
-                <h3 className="text-xl font-bold text-slate-900 dark:text-white tracking-tight mb-3">{hotels.length} active relationships</h3>
+                <h3 className="text-xl font-bold text-slate-900 dark:text-white tracking-tight mb-3">{totals.totalBookings} total bookings</h3>
                 <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-2 overflow-hidden">
                   <div className="bg-primary h-2 rounded-full" style={{ width: `${Math.min(100, hotels.length * 10)}%` }}></div>
                 </div>
-                <p className="text-xs text-slate-400 mt-3">Based on real invoice activity</p>
+                <p className="text-xs text-slate-400 mt-3">Based on booking activity</p>
               </div>
             </section>
 
@@ -272,7 +272,7 @@ export default function CorporatePortalClient() {
                           <span className="text-lg font-bold text-slate-900 dark:text-white">₹{hotel.totalSpent.toLocaleString()}</span>
                         </div>
                         <div className="flex flex-col gap-0.5">
-                          <span className="text-xs text-slate-500 dark:text-slate-400 font-medium uppercase tracking-wider">Outstanding</span>
+                          <span className="text-xs text-slate-500 dark:text-slate-400 font-medium uppercase tracking-wider">Pending</span>
                           <span className={`text-lg font-bold ${hotel.outstanding > 0 ? 'text-orange-600 dark:text-orange-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                             ₹{hotel.outstanding.toLocaleString()}
                           </span>
@@ -281,8 +281,8 @@ export default function CorporatePortalClient() {
 
                       <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 border-t border-slate-100 dark:border-slate-700 pt-3">
                         <span className="flex items-center gap-1">
-                          <span className="material-symbols-outlined text-[14px]">receipt_long</span>
-                          {hotel.pendingInvoices} pending invoice{hotel.pendingInvoices !== 1 ? 's' : ''}
+                          <span className="material-symbols-outlined text-[14px]">pending_actions</span>
+                          {hotel.pendingInvoices} pending booking{hotel.pendingInvoices !== 1 ? 's' : ''}
                         </span>
                         <span>Last stay: {formatLastStay(hotel.lastStayDate)}</span>
                       </div>

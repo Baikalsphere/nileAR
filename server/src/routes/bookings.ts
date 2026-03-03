@@ -132,7 +132,7 @@ const ensureBookingRequestsTable = async () => {
            booking_number text NOT NULL,
            organization_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
            hotel_user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-           employee_id uuid NOT NULL REFERENCES corporate_employees(id) ON DELETE RESTRICT,
+           employee_id uuid NOT NULL REFERENCES portal_users(id) ON DELETE RESTRICT,
            room_type text NOT NULL,
            check_in_date date NOT NULL,
            check_out_date date NOT NULL,
@@ -344,14 +344,15 @@ router.get("/meta/organizations/:organizationId/employees", async (req, res, nex
     const userId = req.user?.id;
 
     const result = await query(
-      `SELECT id, employee_code, full_name, email, department, designation
-       FROM corporate_employees
-       WHERE organization_id = $1
+      `SELECT id, full_name, email, role AS department
+       FROM portal_users
+       WHERE parent_id = $1
+         AND portal_type = 'corporate'
          AND is_active = true
          AND EXISTS (
            SELECT 1
            FROM hotel_organizations ho
-           WHERE ho.organization_id = corporate_employees.organization_id
+           WHERE ho.organization_id = $1
              AND ho.hotel_user_id = $2
          )
        ORDER BY full_name ASC`,
@@ -360,11 +361,11 @@ router.get("/meta/organizations/:organizationId/employees", async (req, res, nex
 
     const employees = result.rows.map((row) => ({
       id: row.id,
-      employeeCode: row.employee_code,
+      employeeCode: row.email,
       fullName: row.full_name,
       email: row.email,
       department: row.department,
-      designation: row.designation
+      designation: null
     }));
 
     return res.status(200).json({ employees });
@@ -413,47 +414,138 @@ router.get("/meta/organizations/:organizationId/room-types", async (req, res, ne
   }
 });
 
+// Reports & Analytics data for hotel finance reports page
+router.get("/reports", async (req, res, next) => {
+  try {
+    const userId = req.user?.id;
+
+    // Get all bookings for this hotel, grouped by month for revenue trend
+    const revenueResult = await query(
+      `SELECT
+         TO_CHAR(b.check_in_date, 'Mon') AS month_label,
+         EXTRACT(MONTH FROM b.check_in_date) AS month_num,
+         COALESCE(SUM(b.total_price), 0) AS total_revenue
+       FROM hotel_bookings b
+       WHERE b.created_by = $1
+         AND b.status != 'cancelled'
+         AND b.check_in_date >= DATE_TRUNC('year', CURRENT_DATE)
+       GROUP BY month_label, month_num
+       ORDER BY month_num`,
+      [userId]
+    );
+
+    const revenueData = revenueResult.rows.map((row) => ({
+      month: String(row.month_label).trim(),
+      roomRevenue: Math.round(Number(row.total_revenue) * 0.85),
+      incidentals: Math.round(Number(row.total_revenue) * 0.15),
+      total: Math.round(Number(row.total_revenue))
+    }));
+
+    // Room type performance
+    const roomResult = await query(
+      `SELECT
+         b.room_type,
+         COUNT(*) AS booking_count,
+         COALESCE(SUM(b.nights), 0) AS total_nights,
+         COALESCE(AVG(b.price_per_night), 0) AS avg_daily_rate,
+         COALESCE(SUM(b.total_price), 0) AS total_revenue
+       FROM hotel_bookings b
+       WHERE b.created_by = $1
+         AND b.status != 'cancelled'
+       GROUP BY b.room_type
+       ORDER BY total_revenue DESC`,
+      [userId]
+    );
+
+    const roomPerformance = roomResult.rows.map((row) => ({
+      roomType: String(row.room_type),
+      occupancy: 0,
+      revenue: Math.round(Number(row.total_revenue)),
+      avgDailyRate: Math.round(Number(row.avg_daily_rate)),
+      nights: Number(row.total_nights)
+    }));
+
+    // Corporate clients performance
+    const clientsResult = await query(
+      `SELECT
+         o.name,
+         COUNT(*) AS total_bookings,
+         COALESCE(SUM(b.total_price), 0) AS total_spent,
+         COALESCE(SUM(b.nights), 0) AS occupied_nights,
+         COALESCE(AVG(b.total_price), 0) AS avg_booking_value
+       FROM hotel_bookings b
+       JOIN organizations o ON o.id = b.organization_id
+       WHERE b.created_by = $1
+         AND b.status != 'cancelled'
+       GROUP BY o.name
+       ORDER BY total_spent DESC`,
+      [userId]
+    );
+
+    const corporateClients = clientsResult.rows.map((row) => ({
+      name: String(row.name),
+      totalBookings: Number(row.total_bookings),
+      totalSpent: Math.round(Number(row.total_spent)),
+      occupiedNights: Number(row.occupied_nights),
+      avgBookingValue: Math.round(Number(row.avg_booking_value)),
+      paymentStatus: "paid" as const
+    }));
+
+    // KPI summary
+    const totalRevenue = revenueData.reduce((s, d) => s + d.total, 0);
+    const totalBookings = corporateClients.reduce((s, c) => s + c.totalBookings, 0);
+    const avgDailyRate = roomPerformance.length > 0
+      ? Math.round(roomPerformance.reduce((s, r) => s + r.avgDailyRate, 0) / roomPerformance.length)
+      : 0;
+
+    return res.status(200).json({
+      revenueData,
+      roomPerformance,
+      corporateClients,
+      kpi: {
+        totalRevenue,
+        totalBookings,
+        avgDailyRate
+      }
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.get("/dashboard/summary", async (req, res, next) => {
   try {
     const userId = req.user?.id;
+
+    // Fetch all bookings for this hotel
     const result = await query(
-      `SELECT i.id,
-              i.amount,
-              i.status,
-              i.invoice_date,
-              i.due_date,
-              i.sent_at,
-              o.name AS organization_name
-       FROM corporate_invoices i
-       JOIN hotel_bookings b ON b.id = i.booking_id
+      `SELECT b.id, b.total_price, b.status, b.check_in_date, b.check_out_date,
+              b.created_at, o.name AS organization_name
+       FROM hotel_bookings b
        JOIN organizations o ON o.id = b.organization_id
        WHERE b.created_by = $1`,
       [userId]
     );
 
-    const invoices = result.rows.map((row) => {
-      const amount = Number(row.amount ?? 0);
-      const invoiceDate = row.invoice_date ? new Date(row.invoice_date) : null;
-      const sentAt = row.sent_at ? new Date(row.sent_at) : null;
-      const invoicedAt = sentAt && !Number.isNaN(sentAt.getTime()) ? sentAt : invoiceDate;
-      const dueDate = row.due_date ? new Date(row.due_date) : null;
+    const bookings = result.rows.map((row) => {
+      const totalPrice = Number(row.total_price ?? 0);
       const status = String(row.status ?? "").toLowerCase();
+      const checkInDate = row.check_in_date ? new Date(row.check_in_date) : null;
+      const createdAt = row.created_at ? new Date(row.created_at) : null;
       const organizationName = row.organization_name ? String(row.organization_name) : "Unknown";
-      const isOutstanding = status === "unpaid" || status === "overdue";
-      const isPaid = status === "paid";
-      const isOverdue = status === "overdue" || (status === "unpaid" && dueDate !== null && dueDate.getTime() < Date.now());
+      const isActive = ["pending", "confirmed", "checked-in"].includes(status);
+      const isCompleted = status === "checked-out";
+      const isCancelled = status === "cancelled";
 
       return {
-        amount,
+        totalPrice,
         status,
-        invoiceDate,
-        sentAt,
-        invoicedAt,
-        dueDate,
+        checkInDate,
+        createdAt,
         organizationName,
-        isOutstanding,
-        isPaid,
-        isOverdue
+        isActive,
+        isCompleted,
+        isCancelled
       };
     });
 
@@ -468,21 +560,27 @@ router.get("/dashboard/summary", async (req, res, next) => {
       return date.getFullYear() === currentYear && date.getMonth() === currentMonth;
     };
 
-    const totalInvoiced = invoices
-      .reduce((sum, invoice) => sum + invoice.amount, 0);
+    // Total Revenue = sum of all non-cancelled bookings
+    const totalRevenue = bookings
+      .filter((b) => !b.isCancelled)
+      .reduce((sum, b) => sum + b.totalPrice, 0);
 
-    const totalCollected = invoices
-      .filter((invoice) => invoice.isPaid)
-      .reduce((sum, invoice) => sum + invoice.amount, 0);
+    // Collected = completed (checked-out) bookings
+    const totalCollected = bookings
+      .filter((b) => b.isCompleted)
+      .reduce((sum, b) => sum + b.totalPrice, 0);
 
-    const totalOutstanding = invoices
-      .filter((invoice) => invoice.isOutstanding)
-      .reduce((sum, invoice) => sum + invoice.amount, 0);
+    // Pending = active bookings (pending, confirmed, checked-in)
+    const totalPending = bookings
+      .filter((b) => b.isActive)
+      .reduce((sum, b) => sum + b.totalPrice, 0);
 
-    const overdueInvoices = invoices.filter((invoice) => invoice.isOverdue).length;
+    // Active bookings count
+    const activeBookings = bookings.filter((b) => b.isActive).length;
 
+    // Weekly booking trend for current month
     const weekLabels = ["Week 1", "Week 2", "Week 3", "Week 4"];
-    const invoiceVsCollection = weekLabels.map((label, index) => {
+    const bookingTrend = weekLabels.map((label, index) => {
       const startDay = index * 7 + 1;
       const endDay = index === 3 ? 31 : startDay + 6;
 
@@ -494,80 +592,80 @@ router.get("/dashboard/summary", async (req, res, next) => {
         return day >= startDay && day <= endDay;
       };
 
-      const invoiced = invoices
-        .filter((invoice) => inWeek(invoice.invoicedAt))
-        .reduce((sum, invoice) => sum + invoice.amount, 0);
+      const booked = bookings
+        .filter((b) => !b.isCancelled && inWeek(b.createdAt))
+        .reduce((sum, b) => sum + b.totalPrice, 0);
 
-      const collected = invoices
-        .filter((invoice) => invoice.isPaid && inWeek(invoice.invoiceDate))
-        .reduce((sum, invoice) => sum + invoice.amount, 0);
+      const completed = bookings
+        .filter((b) => b.isCompleted && inWeek(b.checkInDate))
+        .reduce((sum, b) => sum + b.totalPrice, 0);
 
-      return {
-        label,
-        invoiced,
-        collected
-      };
+      return { label, booked, completed };
     });
 
-    const outstandingInvoices = invoices.filter((invoice) => invoice.isOutstanding);
-    const outstandingTotal = outstandingInvoices.reduce((sum, invoice) => sum + invoice.amount, 0);
-
-    const agingBuckets = [
-      { label: "0-30 Days", key: "zeroToThirty", amount: 0 },
-      { label: "31-60 Days", key: "thirtyOneToSixty", amount: 0 },
-      { label: "60+ Days", key: "sixtyPlus", amount: 0 }
-    ];
-
-    for (const invoice of outstandingInvoices) {
-      const dateToAgeFrom = invoice.invoiceDate;
-      if (!dateToAgeFrom || Number.isNaN(dateToAgeFrom.getTime())) {
-        agingBuckets[0].amount += invoice.amount;
-        continue;
-      }
-
-      const ageInDays = Math.max(0, Math.floor((now.getTime() - dateToAgeFrom.getTime()) / (1000 * 60 * 60 * 24)));
-      if (ageInDays <= 30) {
-        agingBuckets[0].amount += invoice.amount;
-      } else if (ageInDays <= 60) {
-        agingBuckets[1].amount += invoice.amount;
-      } else {
-        agingBuckets[2].amount += invoice.amount;
-      }
+    // Booking status breakdown
+    const statusCounts = {
+      pending: 0,
+      confirmed: 0,
+      checkedIn: 0,
+      checkedOut: 0,
+      cancelled: 0
+    };
+    for (const b of bookings) {
+      if (b.status === "pending") statusCounts.pending++;
+      else if (b.status === "confirmed") statusCounts.confirmed++;
+      else if (b.status === "checked-in") statusCounts.checkedIn++;
+      else if (b.status === "checked-out") statusCounts.checkedOut++;
+      else if (b.status === "cancelled") statusCounts.cancelled++;
     }
 
-    const aging = {
-      totalDue: outstandingTotal,
-      buckets: agingBuckets.map((bucket) => ({
-        label: bucket.label,
-        amount: bucket.amount,
-        percentage: outstandingTotal > 0 ? (bucket.amount / outstandingTotal) * 100 : 0
-      }))
+    const totalNonCancelled = bookings.filter((b) => !b.isCancelled).length;
+    const statusBreakdown = {
+      total: totalNonCancelled,
+      buckets: [
+        {
+          label: "Active",
+          count: statusCounts.pending + statusCounts.confirmed + statusCounts.checkedIn,
+          percentage: totalNonCancelled > 0
+            ? ((statusCounts.pending + statusCounts.confirmed + statusCounts.checkedIn) / totalNonCancelled) * 100
+            : 0
+        },
+        {
+          label: "Completed",
+          count: statusCounts.checkedOut,
+          percentage: totalNonCancelled > 0 ? (statusCounts.checkedOut / totalNonCancelled) * 100 : 0
+        },
+        {
+          label: "Cancelled",
+          count: statusCounts.cancelled,
+          percentage: bookings.length > 0 ? (statusCounts.cancelled / bookings.length) * 100 : 0
+        }
+      ]
     };
 
-    const organizationOutstandingMap = new Map<string, number>();
-    for (const invoice of outstandingInvoices) {
-      const current = organizationOutstandingMap.get(invoice.organizationName) ?? 0;
-      organizationOutstandingMap.set(invoice.organizationName, current + invoice.amount);
+    // Top organizations by revenue
+    const orgRevenueMap = new Map<string, number>();
+    for (const b of bookings) {
+      if (b.isCancelled) continue;
+      const current = orgRevenueMap.get(b.organizationName) ?? 0;
+      orgRevenueMap.set(b.organizationName, current + b.totalPrice);
     }
 
-    const topOrganizationsOutstanding = Array.from(organizationOutstandingMap.entries())
-      .map(([name, amount]) => ({
-        name,
-        amount
-      }))
+    const topOrganizations = Array.from(orgRevenueMap.entries())
+      .map(([name, amount]) => ({ name, amount }))
       .sort((a, b) => b.amount - a.amount)
       .slice(0, 4);
 
     return res.status(200).json({
       summary: {
-        totalInvoiced,
+        totalRevenue,
         totalCollected,
-        totalOutstanding,
-        overdueInvoices
+        totalPending,
+        activeBookings
       },
-      invoiceVsCollection,
-      aging,
-      topOrganizationsOutstanding
+      bookingTrend,
+      statusBreakdown,
+      topOrganizations
     });
   } catch (error) {
     return next(error);
@@ -587,14 +685,14 @@ router.get("/", async (req, res, next) => {
               b.total_price, b.gst_applicable, b.status, b.invoice_id, b.sent_at,
               o.name AS organization_name,
               e.full_name AS employee_name,
-              e.employee_code,
+              e.email AS employee_code,
               o.credit_period,
               i.invoice_number,
               i.invoice_date,
               i.due_date
        FROM hotel_bookings b
        JOIN organizations o ON o.id = b.organization_id
-       JOIN corporate_employees e ON e.id = b.employee_id
+       JOIN portal_users e ON e.id = b.employee_id
        LEFT JOIN corporate_invoices i ON i.id = b.invoice_id
        WHERE ($1::text IS NULL OR b.status = $1)
          AND ($2::date IS NULL OR b.check_in_date >= $2::date)
@@ -734,10 +832,10 @@ router.get("/requests", async (req, res, next) => {
               o.name AS organization_name,
               o.contact_email AS organization_email,
               e.full_name AS employee_name,
-              e.employee_code
+              e.email AS employee_code
        FROM booking_requests br
        JOIN organizations o ON o.id = br.organization_id
-       JOIN corporate_employees e ON e.id = br.employee_id
+       JOIN portal_users e ON e.id = br.employee_id
        WHERE br.hotel_user_id = $1
          AND ($2::text IS NULL OR br.status = $2)
        ORDER BY br.requested_at DESC`,
@@ -810,7 +908,7 @@ router.post("/requests/:requestId/decision", async (req, res, next) => {
               u.email AS hotel_user_email
        FROM booking_requests br
        JOIN organizations o ON o.id = br.organization_id
-       JOIN corporate_employees e ON e.id = br.employee_id
+       JOIN portal_users e ON e.id = br.employee_id
        LEFT JOIN hotel_profiles hp ON hp.user_id = br.hotel_user_id
        LEFT JOIN users u ON u.id = br.hotel_user_id
        WHERE br.id = $1
@@ -950,10 +1048,10 @@ router.get("/:bookingId", async (req, res, next) => {
               b.check_in_date, b.check_out_date, b.nights, b.price_per_night,
               b.total_price, b.gst_applicable, b.status, b.invoice_id, b.sent_at,
               o.name AS organization_name, o.contact_email,
-              e.full_name AS employee_name, e.employee_code
+              e.full_name AS employee_name, e.email AS employee_code
        FROM hotel_bookings b
        JOIN organizations o ON o.id = b.organization_id
-       JOIN corporate_employees e ON e.id = b.employee_id
+       JOIN portal_users e ON e.id = b.employee_id
        WHERE b.id = $1
          AND b.created_by = $2`,
       [bookingId, userId]
@@ -1170,13 +1268,13 @@ router.post("/:bookingId/send", async (req, res, next) => {
               b.check_in_date, b.check_out_date, b.nights, b.total_price,
               b.invoice_id, b.sent_at,
               o.name AS organization_name, o.contact_email, o.credit_period,
-              e.full_name AS employee_name, e.employee_code,
+              e.full_name AS employee_name, e.email AS employee_code,
               hp.hotel_name,
               hp.location AS hotel_location,
               hp.logo_url AS hotel_logo_url
        FROM hotel_bookings b
        JOIN organizations o ON o.id = b.organization_id
-       JOIN corporate_employees e ON e.id = b.employee_id
+       JOIN portal_users e ON e.id = b.employee_id
        LEFT JOIN hotel_profiles hp ON hp.user_id::text = b.created_by
        WHERE b.id = $1
          AND b.created_by = $2

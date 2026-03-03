@@ -3,6 +3,10 @@ export interface CorporateAuthUser {
   userId: string;
   name: string;
   role: string;
+  isSubUser?: boolean;
+  portalUserId?: string;
+  fullName?: string;
+  allowedPages?: string[];
 }
 
 export interface CorporateProfile {
@@ -286,6 +290,11 @@ export const loginCorporate = async (username: string, password: string) => {
 
   const data = (await response.json()) as CorporateAuthResponse;
   corporateTokenStorage.set(data.accessToken);
+  setCorporateUserRoleInStorage({
+    role: data.user.role || "admin",
+    isSubUser: data.user.isSubUser || false,
+    allowedPages: data.user.allowedPages || []
+  });
   return data;
 };
 
@@ -635,4 +644,141 @@ export const fetchCorporateBookingRequests = async (params?: {
   }
 
   return (await response.json()) as { requests: CorporateBookingRequestRecord[] };
+};
+
+// ══════════════════════════════════════════════════════════════
+// Portal User Management (Corporate)
+// ══════════════════════════════════════════════════════════════
+
+export interface CorporatePortalUser {
+  id: string;
+  full_name: string;
+  email: string;
+  role: string;
+  allowed_pages: string[];
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CorporatePortalUserPayload {
+  fullName: string;
+  email: string;
+  role: "admin" | "user";
+  allowedPages: string[];
+}
+
+export interface CorporatePortalUserUpdatePayload {
+  fullName?: string;
+  role?: "admin" | "user";
+  allowedPages?: string[];
+  isActive?: boolean;
+}
+
+export const fetchCorporateUsers = async () => {
+  const response = await fetch(`${corporateApiBaseUrl}/api/auth/corporate/users`, {
+    method: "GET",
+    credentials: "include",
+    headers: { ...getCorporateAuthHeaders() }
+  });
+
+  if (!response.ok) {
+    const message = await parseErrorMessage(response);
+    throw new Error(message);
+  }
+
+  return (await response.json()) as { users: CorporatePortalUser[] };
+};
+
+export const createCorporateUser = async (payload: CorporatePortalUserPayload) => {
+  const response = await fetch(`${corporateApiBaseUrl}/api/auth/corporate/users`, {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+      ...getCorporateAuthHeaders()
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    const message = await parseErrorMessage(response);
+    throw new Error(message);
+  }
+
+  return (await response.json()) as { user: CorporatePortalUser };
+};
+
+export const updateCorporateUser = async (userId: string, payload: CorporatePortalUserUpdatePayload) => {
+  const response = await fetch(`${corporateApiBaseUrl}/api/auth/corporate/users/${userId}`, {
+    method: "PUT",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+      ...getCorporateAuthHeaders()
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    const message = await parseErrorMessage(response);
+    throw new Error(message);
+  }
+
+  return (await response.json()) as { user: CorporatePortalUser };
+};
+
+export const deleteCorporateUser = async (userId: string) => {
+  const response = await fetch(`${corporateApiBaseUrl}/api/auth/corporate/users/${userId}`, {
+    method: "DELETE",
+    credentials: "include",
+    headers: { ...getCorporateAuthHeaders() }
+  });
+
+  if (!response.ok) {
+    const message = await parseErrorMessage(response);
+    throw new Error(message);
+  }
+
+  return (await response.json()) as { ok: boolean };
+};
+
+export const changeCorporateUserPassword = async (payload: {
+  currentPassword: string;
+  newPassword: string;
+  confirmPassword: string;
+}) => {
+  const response = await fetch(`${corporateApiBaseUrl}/api/auth/corporate/user/change-password`, {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+      ...getCorporateAuthHeaders()
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    const message = await parseErrorMessage(response);
+    throw new Error(message);
+  }
+
+  return (await response.json()) as { ok: boolean };
+};
+
+export const getCorporateUserRoleFromStorage = (): { role: string; isSubUser: boolean; allowedPages: string[] } => {
+  if (typeof window === "undefined") return { role: "admin", isSubUser: false, allowedPages: [] };
+  const data = window.sessionStorage.getItem("cp_user_meta");
+  if (!data) return { role: "admin", isSubUser: false, allowedPages: [] };
+  try {
+    return JSON.parse(data);
+  } catch {
+    return { role: "admin", isSubUser: false, allowedPages: [] };
+  }
+};
+
+export const setCorporateUserRoleInStorage = (meta: { role: string; isSubUser: boolean; allowedPages: string[] }) => {
+  if (typeof window !== "undefined") {
+    window.sessionStorage.setItem("cp_user_meta", JSON.stringify(meta));
+  }
 };

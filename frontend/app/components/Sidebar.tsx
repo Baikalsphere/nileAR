@@ -2,9 +2,9 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { useState } from 'react'
-import { logout } from '@/lib/auth'
-import { logoutCorporate } from '@/lib/corporateAuth'
+import { useState, useEffect } from 'react'
+import { logout, getUserRoleFromStorage } from '@/lib/auth'
+import { logoutCorporate, getCorporateUserRoleFromStorage } from '@/lib/corporateAuth'
 
 export interface SidebarProps {
   title: string
@@ -20,6 +20,27 @@ export default function Sidebar({ title, logoIcon }: SidebarProps) {
   // Determine which portal we're in
   const isHotelFinance = pathname.includes('/hotel-finance')
   const isCorporatePortal = pathname.includes('/corporate-portal')
+
+  // Get user role and allowed pages
+  const [userMeta, setUserMeta] = useState<{ role: string; isSubUser: boolean; allowedPages: string[] } | null>(null)
+
+  useEffect(() => {
+    if (isHotelFinance) {
+      setUserMeta(getUserRoleFromStorage())
+    } else if (isCorporatePortal) {
+      setUserMeta(getCorporateUserRoleFromStorage())
+    }
+  }, [isHotelFinance, isCorporatePortal])
+
+  const isAdmin = userMeta ? (userMeta.role === 'admin' && !userMeta.isSubUser) : false
+
+  // Check if a page is accessible to this user
+  const canAccess = (pageKey: string) => {
+    if (!userMeta) return false // not loaded yet, hide everything
+    if (!userMeta.isSubUser) return true // main org/hotel admin sees all
+    if (userMeta.role === 'admin') return true // sub-user with admin role sees all
+    return userMeta.allowedPages.includes(pageKey) // sub-user with "user" role checks allowedPages
+  }
   
   const dashboardHref = isCorporatePortal ? '/corporate-portal' : (isHotelFinance ? '/hotel-finance' : '#')
   const invoicesHref = isCorporatePortal ? '/corporate-portal/invoices' : '#'
@@ -32,6 +53,8 @@ export default function Sidebar({ title, logoIcon }: SidebarProps) {
   const employeesHref = isCorporatePortal ? '/corporate-portal/employees' : '#'
   const reportsHref = isCorporatePortal ? '/corporate-portal/reports' : '#'
   const settingsHref = isCorporatePortal ? '/corporate-portal/settings' : '#'
+  const hotelUsersHref = isHotelFinance ? '/hotel-finance/users' : '#'
+  const corporateUsersHref = isCorporatePortal ? '/corporate-portal/users' : '#'
   
   // Determine active states
   const isDashboardActive = pathname === dashboardHref
@@ -45,6 +68,8 @@ export default function Sidebar({ title, logoIcon }: SidebarProps) {
   const isEmployeesActive = pathname === employeesHref
   const isReportsActive = pathname === reportsHref
   const isSettingsActive = pathname === settingsHref
+  const isHotelUsersActive = pathname === hotelUsersHref
+  const isCorporateUsersActive = pathname === corporateUsersHref
 
   const handleLogout = async () => {
     if (isCorporatePortal) {
@@ -94,6 +119,7 @@ export default function Sidebar({ title, logoIcon }: SidebarProps) {
         </div>
       </button>
       <div className="flex flex-col flex-1 p-4 gap-2 overflow-y-auto">
+        {canAccess('dashboard') && (
         <div 
           className="relative"
           onMouseEnter={() => isCollapsed && setShowTooltip('dashboard')}
@@ -114,8 +140,10 @@ export default function Sidebar({ title, logoIcon }: SidebarProps) {
             </div>
           )}
         </div>
+        )}
         {isCorporatePortal && (
           <>
+            {canAccess('invoices') && (
             <div 
               className="relative"
               onMouseEnter={() => isCollapsed && setShowTooltip('invoices')}
@@ -136,26 +164,30 @@ export default function Sidebar({ title, logoIcon }: SidebarProps) {
                 </div>
               )}
             </div>
+            )}
+            {canAccess('users') && (
             <div 
               className="relative"
-              onMouseEnter={() => isCollapsed && setShowTooltip('employees')}
+              onMouseEnter={() => isCollapsed && setShowTooltip('users')}
               onMouseLeave={() => setShowTooltip(null)}
             >
-              <Link className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-300 group/link ${isEmployeesActive ? 'bg-primary/10 text-primary hover:shadow-md hover:shadow-primary/20' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:translate-x-1'} ${isCollapsed ? 'justify-center' : ''}`} href={employeesHref}>
+              <Link className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-300 group/link ${isCorporateUsersActive ? 'bg-primary/10 text-primary hover:shadow-md hover:shadow-primary/20' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:translate-x-1'} ${isCollapsed ? 'justify-center' : ''}`} href={corporateUsersHref}>
                 <span className={`material-symbols-outlined text-[22px] transition-transform duration-300 ${isCollapsed ? 'group-hover/link:scale-125' : ''}`}>group</span>
-                <p className={`text-sm font-medium transition-all duration-500 ${isCollapsed ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100 delay-75'}`}>Employees</p>
+                <p className={`text-sm font-medium transition-all duration-500 ${isCollapsed ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100 delay-75'}`}>Users</p>
                 {!isCollapsed && (
-                  <span className={`material-symbols-outlined text-[16px] ml-auto opacity-0 -translate-x-2 transition-all duration-300 ${isEmployeesActive ? 'group-hover/link:opacity-100 group-hover/link:translate-x-0' : 'group-hover/link:opacity-100 group-hover/link:translate-x-0'}`}>
+                  <span className={`material-symbols-outlined text-[16px] ml-auto opacity-0 -translate-x-2 transition-all duration-300 ${isCorporateUsersActive ? 'group-hover/link:opacity-100 group-hover/link:translate-x-0' : 'group-hover/link:opacity-100 group-hover/link:translate-x-0'}`}>
                     arrow_forward
                   </span>
                 )}
               </Link>
-              {isCollapsed && showTooltip === 'employees' && (
+              {isCollapsed && showTooltip === 'users' && (
                 <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2 px-3 py-2 bg-slate-800 text-white text-xs rounded-lg whitespace-nowrap z-50 shadow-lg animate-in fade-in slide-in-from-left-1 duration-200">
-                  Employees
+                  Users
                 </div>
               )}
             </div>
+            )}
+            {canAccess('employee-stays') && (
             <div 
               className="relative"
               onMouseEnter={() => isCollapsed && setShowTooltip('employee-stays')}
@@ -176,6 +208,8 @@ export default function Sidebar({ title, logoIcon }: SidebarProps) {
                 </div>
               )}
             </div>
+            )}
+            {canAccess('book-rooms') && (
             <div
               className="relative"
               onMouseEnter={() => isCollapsed && setShowTooltip('book-rooms')}
@@ -196,10 +230,12 @@ export default function Sidebar({ title, logoIcon }: SidebarProps) {
                 </div>
               )}
             </div>
+            )}
           </>
         )}
         {isHotelFinance && (
           <>
+            {canAccess('organizations') && (
             <div 
               className="relative"
               onMouseEnter={() => isCollapsed && setShowTooltip('organizations')}
@@ -220,6 +256,8 @@ export default function Sidebar({ title, logoIcon }: SidebarProps) {
                 </div>
               )}
             </div>
+            )}
+            {canAccess('bookings') && (
             <div 
               className="relative"
               onMouseEnter={() => isCollapsed && setShowTooltip('bookings')}
@@ -240,6 +278,8 @@ export default function Sidebar({ title, logoIcon }: SidebarProps) {
                 </div>
               )}
             </div>
+            )}
+            {canAccess('reports') && (
             <div 
               className="relative"
               onMouseEnter={() => isCollapsed && setShowTooltip('reports')}
@@ -260,9 +300,32 @@ export default function Sidebar({ title, logoIcon }: SidebarProps) {
                 </div>
               )}
             </div>
+            )}
+            {isAdmin && (
+            <div
+              className="relative"
+              onMouseEnter={() => isCollapsed && setShowTooltip('hotel-users')}
+              onMouseLeave={() => setShowTooltip(null)}
+            >
+              <Link className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-300 group/link ${isHotelUsersActive ? 'bg-primary/10 text-primary hover:shadow-md hover:shadow-primary/20' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:translate-x-1'} ${isCollapsed ? 'justify-center' : ''}`} href={hotelUsersHref}>
+                <span className={`material-symbols-outlined text-[22px] transition-transform duration-300 ${isCollapsed ? 'group-hover/link:scale-125' : ''}`}>manage_accounts</span>
+                <p className={`text-sm font-medium transition-all duration-500 ${isCollapsed ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100 delay-75'}`}>Users</p>
+                {!isCollapsed && (
+                  <span className={`material-symbols-outlined text-[16px] ml-auto opacity-0 -translate-x-2 transition-all duration-300 ${isHotelUsersActive ? 'group-hover/link:opacity-100 group-hover/link:translate-x-0' : 'group-hover/link:opacity-100 group-hover/link:translate-x-0'}`}>
+                    arrow_forward
+                  </span>
+                )}
+              </Link>
+              {isCollapsed && showTooltip === 'hotel-users' && (
+                <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2 px-3 py-2 bg-slate-800 text-white text-xs rounded-lg whitespace-nowrap z-50 shadow-lg animate-in fade-in slide-in-from-left-1 duration-200">
+                  Users
+                </div>
+              )}
+            </div>
+            )}
           </>
         )}
-        {isCorporatePortal && (
+        {isCorporatePortal && canAccess('reports') && (
           <div 
             className="relative"
             onMouseEnter={() => isCollapsed && setShowTooltip('reports')}
@@ -295,7 +358,7 @@ export default function Sidebar({ title, logoIcon }: SidebarProps) {
             </p>
           </div>
         )}
-        {isCorporatePortal && (
+        {isCorporatePortal && canAccess('settings') && (
           <div 
             className="relative mb-2"
             onMouseEnter={() => isCollapsed && setShowTooltip('settings')}
@@ -317,7 +380,7 @@ export default function Sidebar({ title, logoIcon }: SidebarProps) {
             )}
           </div>
         )}
-        {isHotelFinance && (
+        {isHotelFinance && canAccess('profile') && (
           <div 
             className="relative mb-2"
             onMouseEnter={() => isCollapsed && setShowTooltip('hotel-profile')}

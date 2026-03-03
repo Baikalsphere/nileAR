@@ -216,7 +216,7 @@ CREATE TABLE IF NOT EXISTS hotel_bookings (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   booking_number text UNIQUE NOT NULL,
   organization_id text NOT NULL REFERENCES organizations(id) ON DELETE RESTRICT,
-  employee_id uuid NOT NULL REFERENCES corporate_employees(id) ON DELETE RESTRICT,
+  employee_id uuid NOT NULL REFERENCES portal_users(id) ON DELETE RESTRICT,
   room_type text NOT NULL,
   check_in_date date NOT NULL,
   check_out_date date NOT NULL,
@@ -323,7 +323,7 @@ CREATE TABLE IF NOT EXISTS corporate_invoices (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   booking_id uuid UNIQUE NOT NULL REFERENCES hotel_bookings(id) ON DELETE RESTRICT,
   organization_id text NOT NULL REFERENCES organizations(id) ON DELETE RESTRICT,
-  employee_id uuid NOT NULL REFERENCES corporate_employees(id) ON DELETE RESTRICT,
+  employee_id uuid NOT NULL REFERENCES portal_users(id) ON DELETE RESTRICT,
   invoice_number text UNIQUE NOT NULL,
   invoice_date date NOT NULL,
   due_date date NOT NULL,
@@ -365,7 +365,7 @@ CREATE TABLE IF NOT EXISTS employee_stays (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   booking_id uuid UNIQUE NOT NULL REFERENCES hotel_bookings(id) ON DELETE CASCADE,
-  employee_id uuid NOT NULL REFERENCES corporate_employees(id) ON DELETE RESTRICT,
+  employee_id uuid NOT NULL REFERENCES portal_users(id) ON DELETE RESTRICT,
   property_name text NOT NULL,
   check_in_date date NOT NULL,
   check_out_date date NOT NULL,
@@ -383,5 +383,35 @@ CREATE INDEX IF NOT EXISTS employee_stays_org_id_idx
 DROP TRIGGER IF EXISTS employee_stays_set_updated_at ON employee_stays;
 CREATE TRIGGER employee_stays_set_updated_at
   BEFORE UPDATE ON employee_stays
+  FOR EACH ROW
+  EXECUTE PROCEDURE set_updated_at();
+
+-- ══════════════════════════════════════════════════════════════
+-- Portal sub-users (hotel-finance & corporate)
+-- ══════════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS portal_users (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  portal_type text NOT NULL CHECK (portal_type IN ('hotel_finance', 'corporate')),
+  -- For hotel_finance users, parent_id = users.id (admin hotel user)
+  parent_id text NOT NULL,
+  full_name text NOT NULL,
+  email citext UNIQUE NOT NULL,
+  password_hash text NOT NULL,
+  role text NOT NULL DEFAULT 'user',
+  allowed_pages text[] NOT NULL DEFAULT '{}',
+  is_active boolean NOT NULL DEFAULT true,
+  password_reset_required boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS portal_users_parent_id_idx ON portal_users(parent_id);
+CREATE INDEX IF NOT EXISTS portal_users_portal_type_idx ON portal_users(portal_type);
+CREATE INDEX IF NOT EXISTS portal_users_email_idx ON portal_users(email);
+
+DROP TRIGGER IF EXISTS portal_users_set_updated_at ON portal_users;
+CREATE TRIGGER portal_users_set_updated_at
+  BEFORE UPDATE ON portal_users
   FOR EACH ROW
   EXECUTE PROCEDURE set_updated_at();

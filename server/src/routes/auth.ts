@@ -19,7 +19,8 @@ import {
 } from "../services/supabaseStorage.js";
 import {
   sendBookingRequestHotelNotificationEmail,
-  sendHotelCredentialsEmail
+  sendHotelCredentialsEmail,
+  sendPortalUserCredentialsEmail
 } from "../services/mailer.js";
 
 const router = Router();
@@ -166,6 +167,50 @@ const corporateBookingRequestSchema = z.object({
   gstApplicable: z.boolean().default(false)
 });
 
+const portalUserCreateSchema = z.object({
+  fullName: z.string().min(2).max(160),
+  email: z.string().email().max(320),
+  role: z.enum(["admin", "user"]).default("user"),
+  allowedPages: z.array(z.string().max(120)).default([])
+});
+
+const portalUserUpdateSchema = z.object({
+  fullName: z.string().min(2).max(160).optional(),
+  role: z.enum(["admin", "user"]).optional(),
+  allowedPages: z.array(z.string().max(120)).optional(),
+  isActive: z.boolean().optional()
+});
+
+const portalUserChangePasswordSchema = z.object({
+  currentPassword: z.string().min(1).max(128),
+  newPassword: z.string().min(12).max(128),
+  confirmPassword: z.string().min(12).max(128)
+}).superRefine((value, ctx) => {
+  if (value.newPassword !== value.confirmPassword) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["confirmPassword"],
+      message: "Passwords do not match"
+    });
+  }
+
+  const password = value.newPassword;
+  const checks = [
+    /[a-z]/.test(password),
+    /[A-Z]/.test(password),
+    /[0-9]/.test(password),
+    /[^A-Za-z0-9]/.test(password)
+  ];
+
+  if (checks.some((ok) => !ok)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["newPassword"],
+      message: "Password must include upper, lower, number, and symbol characters"
+    });
+  }
+});
+
 const hotelLogoUpload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -236,9 +281,14 @@ const refreshCookieClearOptions = {
   path: "/api/auth/refresh"
 };
 
-const createAccessToken = (userId: string, role: string): string => {
+const createAccessToken = (userId: string, role: string, subUserMeta?: { isSubUser: boolean; parentId: string; allowedPages: string[] }): string => {
   const token = jwt.sign(
-    { sub: userId, role, scope: "hotel-finance" },
+    {
+      sub: userId,
+      role,
+      scope: "hotel-finance",
+      ...(subUserMeta ? { isSubUser: true, parentId: subUserMeta.parentId, allowedPages: subUserMeta.allowedPages } : {})
+    },
     config.jwtAccessSecret,
     {
       expiresIn: config.accessTokenTtl,
@@ -249,13 +299,14 @@ const createAccessToken = (userId: string, role: string): string => {
   return token;
 };
 
-const createCorporateAccessToken = (organizationId: string, corporateUserId: string): string => {
+const createCorporateAccessToken = (organizationId: string, corporateUserId: string, subUserMeta?: { isSubUser: boolean; portalUserId: string; role: string; allowedPages: string[] }): string => {
   const token = jwt.sign(
     {
       sub: organizationId,
-      role: "corporate_portal_user",
+      role: subUserMeta?.role || "corporate_portal_user",
       scope: "corporate-portal",
-      corporateUserId
+      corporateUserId,
+      ...(subUserMeta ? { isSubUser: true, portalUserId: subUserMeta.portalUserId, allowedPages: subUserMeta.allowedPages } : {})
     },
     config.jwtAccessSecret,
     {
@@ -273,6 +324,9 @@ interface CorporateAccessTokenPayload {
   role: string;
   scope: string;
   corporateUserId: string;
+  isSubUser?: boolean;
+  portalUserId?: string;
+  allowedPages?: string[];
   iat: number;
   exp: number;
   iss: string;
@@ -283,6 +337,9 @@ interface HotelAccessTokenPayload {
   sub: string;
   role: string;
   scope: string;
+  isSubUser?: boolean;
+  parentId?: string;
+  allowedPages?: string[];
   iat: number;
   exp: number;
   iss: string;
@@ -307,7 +364,8 @@ const getCorporatePayload = (req: Request, res: Response): CorporateAccessTokenP
       audience: "corporate-portal-web"
     }) as CorporateAccessTokenPayload;
 
-    if (payload.scope !== "corporate-portal" || payload.role !== "corporate_portal_user") {
+    const validCorporateRoles = ["corporate_portal_user", "admin", "user"];
+    if (payload.scope !== "corporate-portal" || !validCorporateRoles.includes(payload.role)) {
       res.status(403).json({ error: { message: "Forbidden" } });
       return null;
     }
@@ -366,7 +424,7 @@ const ensureBookingRequestsTable = async () => {
            booking_number text NOT NULL,
            organization_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
            hotel_user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-           employee_id uuid NOT NULL REFERENCES corporate_employees(id) ON DELETE RESTRICT,
+           employee_id uuid NOT NULL REFERENCES portal_users(id) ON DELETE RESTRICT,
            room_type text NOT NULL,
            check_in_date date NOT NULL,
            check_out_date date NOT NULL,
@@ -711,17 +769,62 @@ router.post("/login", authLimiter, async (req, res, next) => {
     const { email, password } = loginSchema.parse(req.body);
     const normalizedEmail = email.trim().toLowerCase();
 
+    // First try main users table (admin)
     const userResult = await query(
       `SELECT id, email, role, password_hash, is_active, failed_login_attempts, locked_until
        FROM users WHERE email = $1`,
       [normalizedEmail]
     );
 
-    if (userResult.rowCount === 0) {
+    // Check portal_users table for sub-users
+    const portalUserResult = await query(
+      `SELECT pu.id, pu.email, pu.password_hash, pu.role, pu.parent_id, pu.full_name,
+              pu.allowed_pages, pu.is_active, pu.portal_type
+       FROM portal_users pu
+       WHERE pu.email = $1 AND pu.portal_type = 'hotel_finance'`,
+      [normalizedEmail]
+    );
+
+    if (userResult.rowCount === 0 && portalUserResult.rowCount === 0) {
       await bcrypt.compare(password, DUMMY_PASSWORD_HASH);
       return res.status(401).json({ error: { message: "Invalid credentials" } });
     }
 
+    // Sub-user login
+    if ((portalUserResult.rowCount ?? 0) > 0) {
+      const portalUser = portalUserResult.rows[0];
+
+      if (!portalUser.is_active) {
+        await bcrypt.compare(password, DUMMY_PASSWORD_HASH);
+        return res.status(403).json({ error: { message: "Account disabled" } });
+      }
+
+      const passwordOk = await bcrypt.compare(password, portalUser.password_hash);
+      if (!passwordOk) {
+        return res.status(401).json({ error: { message: "Invalid credentials" } });
+      }
+
+      const accessToken = createAccessToken(portalUser.parent_id, portalUser.role, {
+        isSubUser: true,
+        parentId: portalUser.parent_id,
+        allowedPages: portalUser.allowed_pages || []
+      });
+
+      return res.status(200).json({
+        user: {
+          id: portalUser.parent_id,
+          email: portalUser.email,
+          role: portalUser.role,
+          isSubUser: true,
+          portalUserId: portalUser.id,
+          fullName: portalUser.full_name,
+          allowedPages: portalUser.allowed_pages || []
+        },
+        accessToken
+      });
+    }
+
+    // Admin user login (existing flow)
     const user = userResult.rows[0];
 
     if (!user.is_active) {
@@ -775,7 +878,13 @@ router.post("/login", authLimiter, async (req, res, next) => {
     res.cookie("refresh_token", refreshToken.token, refreshCookieOptions);
 
     return res.status(200).json({
-      user: { id: user.id, email: user.email, role: user.role },
+      user: {
+        id: user.id,
+        email: user.email,
+        role: 'admin',
+        isSubUser: false,
+        allowedPages: []
+      },
       accessToken
     });
   } catch (error) {
@@ -905,11 +1014,58 @@ router.get("/hotel/me", async (req, res, next) => {
 
     const row = result.rows[0];
 
+    // If sub-user, add sub-user info
+    if (payload.isSubUser && payload.parentId) {
+      const puResult = await query(
+        `SELECT id, full_name, email, role, allowed_pages FROM portal_users WHERE parent_id = $1 AND portal_type = 'hotel_finance' AND id = (
+          SELECT id FROM portal_users WHERE parent_id = $1 AND email = (
+            SELECT email FROM portal_users WHERE parent_id = $1 LIMIT 1
+          ) LIMIT 1
+        )`,
+        [payload.parentId]
+      );
+
+      // Find the portal user by checking the token's allowedPages
+      const puResult2 = await query(
+        `SELECT id, full_name, email, role, allowed_pages FROM portal_users
+         WHERE parent_id = $1 AND portal_type = 'hotel_finance'`,
+        [payload.sub]
+      );
+
+      // Match by allowed pages from token
+      const matchedUser = puResult2.rows.find((pu: any) =>
+        JSON.stringify(pu.allowed_pages) === JSON.stringify(payload.allowedPages)
+      ) || puResult2.rows[0];
+
+      return res.status(200).json({
+        user: {
+          id: row.id,
+          email: matchedUser?.email || row.email,
+          role: matchedUser?.role || 'user',
+          isSubUser: true,
+          portalUserId: matchedUser?.id,
+          fullName: matchedUser?.full_name,
+          allowedPages: matchedUser?.allowed_pages || payload.allowedPages || []
+        },
+        profile: {
+          hotelName: row.hotel_name,
+          gst: row.gst,
+          location: row.location,
+          logoUrl: resolveHotelLogoUrl(row.id, row.logo_url),
+          contactEmail: row.contact_email,
+          contactPhone: row.contact_phone,
+          address: row.address
+        }
+      });
+    }
+
     return res.status(200).json({
       user: {
         id: row.id,
         email: row.email,
-        role: row.role
+        role: 'admin',
+        isSubUser: false,
+        allowedPages: []
       },
       profile: {
         hotelName: row.hotel_name,
@@ -1157,6 +1313,64 @@ router.post("/corporate/login", authLimiter, async (req, res, next) => {
     const emailCandidate = normalizedUsername.toLowerCase();
     const isEmailUsername = emailCandidate.includes("@");
 
+    // Check portal_users table for corporate sub-users
+    const portalUserResult = await query(
+      `SELECT pu.id, pu.email, pu.password_hash, pu.role, pu.parent_id, pu.full_name,
+              pu.allowed_pages, pu.is_active, pu.portal_type
+       FROM portal_users pu
+       WHERE pu.email = $1 AND pu.portal_type = 'corporate'`,
+      [emailCandidate]
+    );
+
+    if ((portalUserResult.rowCount ?? 0) > 0) {
+      const portalUser = portalUserResult.rows[0];
+
+      if (!portalUser.is_active) {
+        await bcrypt.compare(password, DUMMY_PASSWORD_HASH);
+        return res.status(403).json({ error: { message: "Account disabled" } });
+      }
+
+      const passwordOk = await bcrypt.compare(password, portalUser.password_hash);
+      if (!passwordOk) {
+        return res.status(401).json({ error: { message: "Invalid credentials" } });
+      }
+
+      // Get parent organization
+      const orgResult = await query(
+        `SELECT id, name, corporate_user_id FROM organizations WHERE id = $1`,
+        [portalUser.parent_id]
+      );
+
+      if (orgResult.rowCount === 0) {
+        return res.status(401).json({ error: { message: "Organization not found" } });
+      }
+
+      const org = orgResult.rows[0];
+
+      const accessToken = createCorporateAccessToken(org.id, org.corporate_user_id, {
+        isSubUser: true,
+        portalUserId: portalUser.id,
+        role: portalUser.role,
+        allowedPages: portalUser.allowed_pages || []
+      });
+
+      return res.status(200).json({
+        user: {
+          id: org.id,
+          userId: org.corporate_user_id,
+          name: org.name,
+          role: portalUser.role,
+          isSubUser: true,
+          portalUserId: portalUser.id,
+          fullName: portalUser.full_name,
+          allowedPages: portalUser.allowed_pages || []
+        },
+        mustSetPassword: false,
+        accessToken
+      });
+    }
+
+    // Admin org login (existing flow)
     const result = await query(
       `SELECT id, name, corporate_user_id, corporate_password_hash, contact_email, password_reset_required, is_active
        FROM organizations
@@ -1201,7 +1415,9 @@ router.post("/corporate/login", authLimiter, async (req, res, next) => {
         id: organization.id,
         userId: organization.corporate_user_id,
         name: organization.name,
-        role: "corporate_portal_user"
+        role: "admin",
+        isSubUser: false,
+        allowedPages: []
       },
       mustSetPassword: Boolean(organization.password_reset_required),
       accessToken
@@ -1235,12 +1451,44 @@ router.get("/corporate/me", async (req, res, next) => {
       return res.status(403).json({ error: { message: "Organization account disabled" } });
     }
 
+    // If sub-user, get their info
+    if (payload.isSubUser && payload.portalUserId) {
+      const puResult = await query(
+        `SELECT id, full_name, email, role, allowed_pages FROM portal_users WHERE id = $1`,
+        [payload.portalUserId]
+      );
+      const portalUser = puResult.rows[0];
+
+      return res.status(200).json({
+        user: {
+          id: organization.id,
+          userId: organization.corporate_user_id,
+          name: organization.name,
+          role: portalUser?.role || payload.role,
+          isSubUser: true,
+          portalUserId: portalUser?.id,
+          fullName: portalUser?.full_name,
+          allowedPages: portalUser?.allowed_pages || []
+        },
+        profile: {
+          name: organization.name,
+          registrationNumber: organization.registration_number,
+          address: organization.registered_address,
+          contactEmail: organization.contact_email,
+          phone: organization.contact_phone
+        },
+        mustSetPassword: false
+      });
+    }
+
     return res.status(200).json({
       user: {
         id: organization.id,
         userId: organization.corporate_user_id,
         name: organization.name,
-        role: "corporate_portal_user"
+        role: "admin",
+        isSubUser: false,
+        allowedPages: []
       },
       profile: {
         name: organization.name,
@@ -1556,9 +1804,10 @@ router.get("/corporate/hotels/:hotelId/booking-request-meta", async (req, res, n
       }));
 
     const employeesResult = await query(
-      `SELECT id, employee_code, full_name, email, department, designation
-       FROM corporate_employees
-       WHERE organization_id = $1
+      `SELECT id, full_name, email, role
+       FROM portal_users
+       WHERE parent_id = $1
+         AND portal_type = 'corporate'
          AND is_active = true
        ORDER BY full_name ASC`,
       [payload.sub]
@@ -1566,11 +1815,11 @@ router.get("/corporate/hotels/:hotelId/booking-request-meta", async (req, res, n
 
     const employees = employeesResult.rows.map((row) => ({
       id: row.id,
-      employeeCode: row.employee_code,
+      employeeCode: row.email,
       fullName: row.full_name,
       email: row.email,
-      department: row.department,
-      designation: row.designation
+      department: row.role,
+      designation: null
     }));
 
     const hotelRow = relationshipResult.rows[0];
@@ -1794,16 +2043,17 @@ router.post("/corporate/booking-requests", async (req, res, next) => {
 
     const employeeResult = await query(
       `SELECT id, full_name
-       FROM corporate_employees
+       FROM portal_users
        WHERE id = $1
-         AND organization_id = $2
+         AND parent_id = $2
+         AND portal_type = 'corporate'
          AND is_active = true
        LIMIT 1`,
       [form.employeeId, payload.sub]
     );
 
     if (employeeResult.rowCount === 0) {
-      return res.status(400).json({ error: { message: "Selected employee is not active for this organization" } });
+      return res.status(400).json({ error: { message: "Selected user is not active for this organization" } });
     }
 
     const contract = await getLatestSignedContractForCorporateHotel(payload.sub, form.hotelId);
@@ -1945,11 +2195,11 @@ router.get("/corporate/booking-requests", async (req, res, next) => {
               br.hotel_user_id::text AS hotel_id,
               COALESCE(hp.hotel_name, u.full_name, u.email, 'Hotel') AS hotel_name,
               e.full_name AS employee_name,
-              e.employee_code
+              e.email AS employee_code
        FROM booking_requests br
        JOIN users u ON u.id = br.hotel_user_id
        LEFT JOIN hotel_profiles hp ON hp.user_id = br.hotel_user_id
-       JOIN corporate_employees e ON e.id = br.employee_id
+       JOIN portal_users e ON e.id = br.employee_id
        WHERE br.organization_id = $1
          AND ($2::boolean = false OR br.status = $3)
        ORDER BY br.requested_at DESC`,
@@ -1998,15 +2248,14 @@ router.get("/corporate/hotels", async (req, res, next) => {
               COUNT(b.id)::int AS total_stays,
               COUNT(*) FILTER (WHERE b.status IN ('pending', 'confirmed', 'checked-in'))::int AS active_stays,
               COALESCE(SUM(b.total_price), 0) AS total_spent,
-              COALESCE(SUM(CASE WHEN i.status IN ('unpaid', 'overdue') THEN i.amount ELSE 0 END), 0) AS outstanding,
-              COUNT(*) FILTER (WHERE i.status IN ('unpaid', 'overdue'))::int AS pending_invoices,
+              COALESCE(SUM(CASE WHEN b.status IN ('pending', 'confirmed', 'checked-in') THEN b.total_price ELSE 0 END), 0) AS pending_amount,
+              COUNT(*) FILTER (WHERE b.status = 'pending')::int AS pending_bookings,
               MAX(b.check_out_date) AS last_stay_date
        FROM hotel_organizations ho
        JOIN users u ON u.id = ho.hotel_user_id
        LEFT JOIN hotel_profiles hp ON hp.user_id = ho.hotel_user_id
        LEFT JOIN hotel_bookings b ON b.organization_id = ho.organization_id
                                 AND b.created_by = ho.hotel_user_id::text
-       LEFT JOIN corporate_invoices i ON i.booking_id = b.id
        WHERE ho.organization_id = $1
        GROUP BY ho.hotel_user_id, hp.user_id, hp.hotel_name, hp.location, hp.logo_url, u.full_name, u.email
        ORDER BY COALESCE(MAX(b.created_at), now()) DESC`,
@@ -2014,7 +2263,7 @@ router.get("/corporate/hotels", async (req, res, next) => {
     );
 
     const hotels = result.rows.map((row) => {
-      const outstanding = Number(row.outstanding ?? 0);
+      const pendingAmount = Number(row.pending_amount ?? 0);
 
       return {
         id: row.hotel_id,
@@ -2024,10 +2273,10 @@ router.get("/corporate/hotels", async (req, res, next) => {
         totalStays: Number(row.total_stays ?? 0),
         activeStays: Number(row.active_stays ?? 0),
         totalSpent: Number(row.total_spent ?? 0),
-        outstanding,
-        pendingInvoices: Number(row.pending_invoices ?? 0),
+        outstanding: pendingAmount,
+        pendingInvoices: Number(row.pending_bookings ?? 0),
         lastStayDate: row.last_stay_date,
-        status: outstanding > 0 ? "active" : "settled"
+        status: Number(row.active_stays ?? 0) > 0 ? "active" : "settled"
       };
     });
 
@@ -2049,14 +2298,14 @@ router.get("/corporate/invoices", async (req, res, next) => {
               i.sent_at, i.created_at,
               b.created_by AS hotel_id,
               e.full_name AS employee_name,
-              e.employee_code,
+              e.email AS employee_code,
         s.property_name,
         hp.hotel_name AS sender_hotel_name,
         hp.logo_url AS sender_hotel_logo_url,
         hp.location AS sender_hotel_location
        FROM corporate_invoices i
       JOIN hotel_bookings b ON b.id = i.booking_id
-       JOIN corporate_employees e ON e.id = i.employee_id
+       JOIN portal_users e ON e.id = i.employee_id
        LEFT JOIN employee_stays s ON s.invoice_id = i.id
       LEFT JOIN hotel_profiles hp ON hp.user_id::text = b.created_by
        WHERE i.organization_id = $1
@@ -2100,7 +2349,7 @@ router.get("/corporate/invoices/:invoiceId", async (req, res, next) => {
             `SELECT i.id, i.invoice_number, i.invoice_date, i.due_date, i.amount, i.status,
               i.sent_at, i.created_at,
               b.id AS booking_id, b.booking_number, b.room_type, b.check_in_date, b.check_out_date,
-              e.full_name AS employee_name, e.employee_code,
+              e.full_name AS employee_name, e.email AS employee_code,
               b.created_by AS hotel_id,
               s.property_name,
               hp.hotel_name AS sender_hotel_name,
@@ -2108,7 +2357,7 @@ router.get("/corporate/invoices/:invoiceId", async (req, res, next) => {
               hp.location AS sender_hotel_location
        FROM corporate_invoices i
        JOIN hotel_bookings b ON b.id = i.booking_id
-       JOIN corporate_employees e ON e.id = i.employee_id
+       JOIN portal_users e ON e.id = i.employee_id
        LEFT JOIN employee_stays s ON s.invoice_id = i.id
       LEFT JOIN hotel_profiles hp ON hp.user_id::text = b.created_by
        WHERE i.organization_id = $1
@@ -2259,11 +2508,11 @@ router.get("/corporate/employee-stays", async (req, res, next) => {
       `SELECT s.id, s.booking_id, s.property_name, s.check_in_date, s.check_out_date,
               s.nights, s.total_amount, s.status, s.invoice_id, s.created_at,
               e.full_name AS employee_name,
-              e.employee_code,
-              e.department,
+              e.email AS employee_code,
+              e.role AS department,
               i.invoice_number
        FROM employee_stays s
-       JOIN corporate_employees e ON e.id = s.employee_id
+       JOIN portal_users e ON e.id = s.employee_id
        LEFT JOIN corporate_invoices i ON i.id = s.invoice_id
        WHERE s.organization_id = $1
        ORDER BY s.created_at DESC`,
@@ -2320,6 +2569,474 @@ router.post("/corporate/set-password", async (req, res, next) => {
       ok: true,
       mustSetPassword: Boolean(result.rows[0].password_reset_required)
     });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+// Portal User Management (Hotel Finance)
+// ══════════════════════════════════════════════════════════════
+
+router.get("/hotel/users", async (req, res, next) => {
+  try {
+    const payload = getHotelPayload(req, res);
+    if (!payload) return;
+
+    // Only admin can list users
+    if (payload.isSubUser) {
+      return res.status(403).json({ error: { message: "Only admin can manage users" } });
+    }
+
+    const result = await query(
+      `SELECT id, full_name, email, role, allowed_pages, is_active, created_at, updated_at
+       FROM portal_users
+       WHERE parent_id = $1 AND portal_type = 'hotel_finance'
+       ORDER BY created_at DESC`,
+      [payload.sub]
+    );
+
+    return res.status(200).json({ users: result.rows });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/hotel/users", async (req, res, next) => {
+  try {
+    const payload = getHotelPayload(req, res);
+    if (!payload) return;
+
+    if (payload.isSubUser) {
+      return res.status(403).json({ error: { message: "Only admin can create users" } });
+    }
+
+    const form = portalUserCreateSchema.parse(req.body);
+    const normalizedEmail = form.email.trim().toLowerCase();
+    const generatedPassword = createGeneratedHotelPassword();
+    const passwordHash = await bcrypt.hash(generatedPassword, config.bcryptCost);
+
+    // Get hotel name for the credential email
+    const hotelResult = await query(
+      `SELECT hp.hotel_name FROM hotel_profiles hp WHERE hp.user_id = $1 LIMIT 1`,
+      [payload.sub]
+    );
+    const hotelName = hotelResult.rows[0]?.hotel_name || "Hotel";
+
+    const result = await query(
+      `INSERT INTO portal_users (portal_type, parent_id, full_name, email, password_hash, role, allowed_pages)
+       VALUES ('hotel_finance', $1, $2, $3, $4, $5, $6)
+       RETURNING id, full_name, email, role, allowed_pages, is_active, created_at, updated_at`,
+      [payload.sub, form.fullName.trim(), normalizedEmail, passwordHash, form.role, form.allowedPages]
+    );
+
+    // Send credentials email
+    try {
+      await sendPortalUserCredentialsEmail({
+        recipientEmail: normalizedEmail,
+        userName: form.fullName.trim(),
+        portalName: `${hotelName} - Hotel Finance`,
+        loginEmail: normalizedEmail,
+        password: generatedPassword,
+        portalType: "hotel_finance"
+      });
+    } catch (emailError: any) {
+      console.error("[mailer] Failed to send portal user credentials:", emailError?.message);
+    }
+
+    return res.status(201).json({ user: result.rows[0] });
+  } catch (error: any) {
+    if (error?.code === "23505") {
+      return res.status(409).json({ error: { message: "Email already registered" } });
+    }
+    return next(error);
+  }
+});
+
+router.put("/hotel/users/:userId", async (req, res, next) => {
+  try {
+    const payload = getHotelPayload(req, res);
+    if (!payload) return;
+
+    if (payload.isSubUser) {
+      return res.status(403).json({ error: { message: "Only admin can update users" } });
+    }
+
+    const form = portalUserUpdateSchema.parse(req.body);
+    const userId = req.params.userId;
+
+    const setClauses: string[] = [];
+    const params: unknown[] = [userId, payload.sub];
+    let paramIndex = 3;
+
+    if (form.fullName !== undefined) {
+      setClauses.push(`full_name = $${paramIndex}`);
+      params.push(form.fullName.trim());
+      paramIndex++;
+    }
+    if (form.role !== undefined) {
+      setClauses.push(`role = $${paramIndex}`);
+      params.push(form.role);
+      paramIndex++;
+    }
+    if (form.allowedPages !== undefined) {
+      setClauses.push(`allowed_pages = $${paramIndex}`);
+      params.push(form.allowedPages);
+      paramIndex++;
+    }
+    if (form.isActive !== undefined) {
+      setClauses.push(`is_active = $${paramIndex}`);
+      params.push(form.isActive);
+      paramIndex++;
+    }
+
+    if (setClauses.length === 0) {
+      return res.status(400).json({ error: { message: "No fields to update" } });
+    }
+
+    const result = await query(
+      `UPDATE portal_users
+       SET ${setClauses.join(", ")}
+       WHERE id = $1 AND parent_id = $2 AND portal_type = 'hotel_finance'
+       RETURNING id, full_name, email, role, allowed_pages, is_active, created_at, updated_at`,
+      params
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: { message: "User not found" } });
+    }
+
+    return res.status(200).json({ user: result.rows[0] });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.delete("/hotel/users/:userId", async (req, res, next) => {
+  try {
+    const payload = getHotelPayload(req, res);
+    if (!payload) return;
+
+    if (payload.isSubUser) {
+      return res.status(403).json({ error: { message: "Only admin can delete users" } });
+    }
+
+    const userId = req.params.userId;
+    const result = await query(
+      `DELETE FROM portal_users WHERE id = $1 AND parent_id = $2 AND portal_type = 'hotel_finance'`,
+      [userId, payload.sub]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: { message: "User not found" } });
+    }
+
+    return res.status(200).json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// Change password for hotel finance sub-user
+router.post("/hotel/user/change-password", async (req, res, next) => {
+  try {
+    const payload = getHotelPayload(req, res);
+    if (!payload) return;
+
+    const { currentPassword, newPassword } = portalUserChangePasswordSchema.parse(req.body);
+
+    // If admin, use existing change password logic (users table)
+    if (!payload.isSubUser) {
+      const userResult = await query(
+        `SELECT id, password_hash, is_active FROM users WHERE id = $1 LIMIT 1`,
+        [payload.sub]
+      );
+
+      if (userResult.rowCount === 0) {
+        return res.status(401).json({ error: { message: "Unauthorized" } });
+      }
+
+      const user = userResult.rows[0];
+      const isCurrentPasswordValid = await bcrypt.compare(currentPassword, user.password_hash);
+      if (!isCurrentPasswordValid) {
+        return res.status(401).json({ error: { message: "Current password is incorrect" } });
+      }
+
+      const passwordHash = await bcrypt.hash(newPassword, config.bcryptCost);
+      await query(
+        `UPDATE users SET password_hash = $2, failed_login_attempts = 0, locked_until = NULL WHERE id = $1`,
+        [payload.sub, passwordHash]
+      );
+
+      return res.status(200).json({ ok: true });
+    }
+
+    // Sub-user – find by parent_id + allowedPages match
+    const puResult = await query(
+      `SELECT id, password_hash FROM portal_users
+       WHERE parent_id = $1 AND portal_type = 'hotel_finance'`,
+      [payload.sub]
+    );
+
+    // Find matching portal user
+    const matchedUser = puResult.rows.find((pu: any) =>
+      JSON.stringify(pu.allowed_pages) === JSON.stringify(payload.allowedPages)
+    ) || puResult.rows[0];
+
+    if (!matchedUser) {
+      return res.status(401).json({ error: { message: "User not found" } });
+    }
+
+    const isCurrentPasswordValid = await bcrypt.compare(currentPassword, matchedUser.password_hash);
+    if (!isCurrentPasswordValid) {
+      return res.status(401).json({ error: { message: "Current password is incorrect" } });
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, config.bcryptCost);
+    await query(
+      `UPDATE portal_users SET password_hash = $2, password_reset_required = false WHERE id = $1`,
+      [matchedUser.id, passwordHash]
+    );
+
+    return res.status(200).json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+// Portal User Management (Corporate)
+// ══════════════════════════════════════════════════════════════
+
+router.get("/corporate/users", async (req, res, next) => {
+  try {
+    const payload = getCorporatePayload(req, res);
+    if (!payload) return;
+
+    // Both admin and sub-users can view the users list
+    const parentId = payload.isSubUser ? payload.portalUserId ? undefined : payload.sub : payload.sub;
+    // For sub-users, look up the parent_id from their portal_users record
+    let orgId = payload.sub;
+    if (payload.isSubUser) {
+      const parentResult = await query(
+        `SELECT parent_id FROM portal_users WHERE id = $1 LIMIT 1`,
+        [payload.portalUserId]
+      );
+      if (parentResult.rows.length > 0) {
+        orgId = parentResult.rows[0].parent_id;
+      }
+    }
+
+    const result = await query(
+      `SELECT id, full_name, email, role, allowed_pages, is_active, created_at, updated_at
+       FROM portal_users
+       WHERE parent_id = $1 AND portal_type = 'corporate'
+       ORDER BY created_at DESC`,
+      [orgId]
+    );
+
+    return res.status(200).json({ users: result.rows });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/corporate/users", async (req, res, next) => {
+  try {
+    const payload = getCorporatePayload(req, res);
+    if (!payload) return;
+
+    if (payload.isSubUser) {
+      return res.status(403).json({ error: { message: "Only admin can create users" } });
+    }
+
+    const form = portalUserCreateSchema.parse(req.body);
+    const normalizedEmail = form.email.trim().toLowerCase();
+    const generatedPassword = createGeneratedHotelPassword();
+    const passwordHash = await bcrypt.hash(generatedPassword, config.bcryptCost);
+
+    // Get org name for the credential email
+    const orgResult = await query(
+      `SELECT name FROM organizations WHERE id = $1 LIMIT 1`,
+      [payload.sub]
+    );
+    const orgName = orgResult.rows[0]?.name || "Organization";
+
+    const result = await query(
+      `INSERT INTO portal_users (portal_type, parent_id, full_name, email, password_hash, role, allowed_pages)
+       VALUES ('corporate', $1, $2, $3, $4, $5, $6)
+       RETURNING id, full_name, email, role, allowed_pages, is_active, created_at, updated_at`,
+      [payload.sub, form.fullName.trim(), normalizedEmail, passwordHash, form.role, form.allowedPages]
+    );
+
+    // Send credentials email
+    try {
+      await sendPortalUserCredentialsEmail({
+        recipientEmail: normalizedEmail,
+        userName: form.fullName.trim(),
+        portalName: `${orgName} - Corporate Portal`,
+        loginEmail: normalizedEmail,
+        password: generatedPassword,
+        portalType: "corporate"
+      });
+    } catch (emailError: any) {
+      console.error("[mailer] Failed to send portal user credentials:", emailError?.message);
+    }
+
+    return res.status(201).json({ user: result.rows[0] });
+  } catch (error: any) {
+    if (error?.code === "23505") {
+      return res.status(409).json({ error: { message: "Email already registered" } });
+    }
+    return next(error);
+  }
+});
+
+router.put("/corporate/users/:userId", async (req, res, next) => {
+  try {
+    const payload = getCorporatePayload(req, res);
+    if (!payload) return;
+
+    if (payload.isSubUser) {
+      return res.status(403).json({ error: { message: "Only admin can update users" } });
+    }
+
+    const form = portalUserUpdateSchema.parse(req.body);
+    const userId = req.params.userId;
+
+    const setClauses: string[] = [];
+    const params: unknown[] = [userId, payload.sub];
+    let paramIndex = 3;
+
+    if (form.fullName !== undefined) {
+      setClauses.push(`full_name = $${paramIndex}`);
+      params.push(form.fullName.trim());
+      paramIndex++;
+    }
+    if (form.role !== undefined) {
+      setClauses.push(`role = $${paramIndex}`);
+      params.push(form.role);
+      paramIndex++;
+    }
+    if (form.allowedPages !== undefined) {
+      setClauses.push(`allowed_pages = $${paramIndex}`);
+      params.push(form.allowedPages);
+      paramIndex++;
+    }
+    if (form.isActive !== undefined) {
+      setClauses.push(`is_active = $${paramIndex}`);
+      params.push(form.isActive);
+      paramIndex++;
+    }
+
+    if (setClauses.length === 0) {
+      return res.status(400).json({ error: { message: "No fields to update" } });
+    }
+
+    const result = await query(
+      `UPDATE portal_users
+       SET ${setClauses.join(", ")}
+       WHERE id = $1 AND parent_id = $2 AND portal_type = 'corporate'
+       RETURNING id, full_name, email, role, allowed_pages, is_active, created_at, updated_at`,
+      params
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: { message: "User not found" } });
+    }
+
+    return res.status(200).json({ user: result.rows[0] });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.delete("/corporate/users/:userId", async (req, res, next) => {
+  try {
+    const payload = getCorporatePayload(req, res);
+    if (!payload) return;
+
+    if (payload.isSubUser) {
+      return res.status(403).json({ error: { message: "Only admin can delete users" } });
+    }
+
+    const userId = req.params.userId;
+    const result = await query(
+      `DELETE FROM portal_users WHERE id = $1 AND parent_id = $2 AND portal_type = 'corporate'`,
+      [userId, payload.sub]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: { message: "User not found" } });
+    }
+
+    return res.status(200).json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// Change password for corporate portal users (admin or sub-user)
+router.post("/corporate/user/change-password", async (req, res, next) => {
+  try {
+    const payload = getCorporatePayload(req, res);
+    if (!payload) return;
+
+    const { currentPassword, newPassword } = portalUserChangePasswordSchema.parse(req.body);
+
+    // Admin change password
+    if (!payload.isSubUser) {
+      const orgResult = await query(
+        `SELECT id, corporate_password_hash FROM organizations WHERE id = $1 LIMIT 1`,
+        [payload.sub]
+      );
+
+      if (orgResult.rowCount === 0) {
+        return res.status(401).json({ error: { message: "Unauthorized" } });
+      }
+
+      const org = orgResult.rows[0];
+      const isCurrentPasswordValid = await bcrypt.compare(currentPassword, org.corporate_password_hash);
+      if (!isCurrentPasswordValid) {
+        return res.status(401).json({ error: { message: "Current password is incorrect" } });
+      }
+
+      const passwordHash = await bcrypt.hash(newPassword, config.bcryptCost);
+      await query(
+        `UPDATE organizations SET corporate_password_hash = $2, password_reset_required = false WHERE id = $1`,
+        [payload.sub, passwordHash]
+      );
+
+      return res.status(200).json({ ok: true });
+    }
+
+    // Sub-user
+    if (!payload.portalUserId) {
+      return res.status(401).json({ error: { message: "User not found" } });
+    }
+
+    const puResult = await query(
+      `SELECT id, password_hash FROM portal_users WHERE id = $1 AND portal_type = 'corporate'`,
+      [payload.portalUserId]
+    );
+
+    if (puResult.rowCount === 0) {
+      return res.status(401).json({ error: { message: "User not found" } });
+    }
+
+    const portalUser = puResult.rows[0];
+    const isCurrentPasswordValid = await bcrypt.compare(currentPassword, portalUser.password_hash);
+    if (!isCurrentPasswordValid) {
+      return res.status(401).json({ error: { message: "Current password is incorrect" } });
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, config.bcryptCost);
+    await query(
+      `UPDATE portal_users SET password_hash = $2, password_reset_required = false WHERE id = $1`,
+      [portalUser.id, passwordHash]
+    );
+
+    return res.status(200).json({ ok: true });
   } catch (error) {
     return next(error);
   }

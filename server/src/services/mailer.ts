@@ -330,3 +330,41 @@ export const sendBookingRequestAcceptedOrganizationEmail = async (payload: {
     `
   });
 };
+
+export const sendPortalUserCredentialsEmail = async (payload: {
+  recipientEmail: string;
+  userName: string;
+  portalName: string;
+  loginEmail: string;
+  password: string;
+  portalType: "hotel_finance" | "corporate";
+}) => {
+  const portalLabel = payload.portalType === "hotel_finance" ? "Hotel Finance Portal" : "Corporate Portal";
+
+  await sendMail({
+    to: payload.recipientEmail,
+    subject: `Your ${portalLabel} Account - ${payload.portalName}`,
+    text: [
+      `Hello ${payload.userName},`,
+      "",
+      `An account has been created for you on the ${payload.portalName}.`,
+      "",
+      "Your login credentials are:",
+      `Email: ${payload.loginEmail}`,
+      `Password: ${payload.password}`,
+      "",
+      "Please sign in and change your password from the settings page.",
+      ""
+    ].join("\n"),
+    html: `
+      <p>Hello ${payload.userName},</p>
+      <p>An account has been created for you on the <strong>${payload.portalName}</strong>.</p>
+      <p>Your login credentials are:</p>
+      <p>
+        <strong>Email:</strong> ${payload.loginEmail}<br/>
+        <strong>Password:</strong> ${payload.password}
+      </p>
+      <p>Please sign in and change your password from the settings page.</p>
+    `
+  });
+};

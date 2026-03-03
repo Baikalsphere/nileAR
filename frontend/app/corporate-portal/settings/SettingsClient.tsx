@@ -8,7 +8,8 @@ import {
   corporateTokenStorage,
   fetchCorporateProfile,
   setCorporatePassword,
-  updateCorporateProfile
+  updateCorporateProfile,
+  changeCorporateUserPassword
 } from "@/lib/corporateAuth"
 
 interface CompanyForm {
@@ -45,6 +46,11 @@ export default function SettingsClient() {
 
   const [companyForm, setCompanyForm] = useState<CompanyForm>(emptyCompanyForm)
   const [isOnboarding, setIsOnboarding] = useState(false)
+
+  const [changePwForm, setChangePwForm] = useState({ currentPassword: "", newPassword: "", confirmPassword: "" })
+  const [isChangingPw, setIsChangingPw] = useState(false)
+  const [changePwError, setChangePwError] = useState<string | null>(null)
+  const [changePwSuccess, setChangePwSuccess] = useState<string | null>(null)
 
   const [taxId, setTaxId] = useState("9918USA29910Z1")
   const [notifications, setNotifications] = useState({
@@ -308,6 +314,17 @@ export default function SettingsClient() {
                       >
                         <span className="material-symbols-outlined icon-sm">notifications</span>
                         Notifications
+                      </button>
+                      <button
+                        onClick={() => setActiveTab("change-password")}
+                        className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
+                          activeTab === "change-password"
+                            ? "bg-primary/10 text-primary font-medium"
+                            : "text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white"
+                        }`}
+                      >
+                        <span className="material-symbols-outlined icon-sm">lock</span>
+                        Change Password
                       </button>
                     </nav>
                   </div>
@@ -606,6 +623,94 @@ export default function SettingsClient() {
                           </label>
                         </div>
                       </div>
+                    </section>
+                  )}
+
+                  {activeTab === "change-password" && (
+                    <section className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm mb-10">
+                      <div className="p-6 border-b border-slate-200 dark:border-slate-700">
+                        <h3 className="text-lg font-bold text-slate-900 dark:text-white">Change Password</h3>
+                        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Update your login password. You&apos;ll need to enter your current password first.</p>
+                      </div>
+                      <form
+                        className="p-6 flex flex-col gap-5 max-w-lg"
+                        onSubmit={async (e: FormEvent<HTMLFormElement>) => {
+                          e.preventDefault()
+                          setChangePwError(null)
+                          setChangePwSuccess(null)
+
+                          const { currentPassword, newPassword, confirmPassword } = changePwForm
+                          if (!currentPassword) { setChangePwError("Current password is required"); return }
+                          if (newPassword.length < 8) { setChangePwError("New password must be at least 8 characters"); return }
+                          if (newPassword !== confirmPassword) { setChangePwError("Passwords do not match"); return }
+
+                          setIsChangingPw(true)
+                          try {
+                            await changeCorporateUserPassword({ currentPassword, newPassword, confirmPassword })
+                            setChangePwSuccess("Password changed successfully.")
+                            setChangePwForm({ currentPassword: "", newPassword: "", confirmPassword: "" })
+                          } catch (err) {
+                            setChangePwError(err instanceof Error ? err.message : "Failed to change password")
+                          } finally {
+                            setIsChangingPw(false)
+                          }
+                        }}
+                      >
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium text-slate-900 dark:text-slate-300">Current Password</label>
+                          <input
+                            type="password"
+                            value={changePwForm.currentPassword}
+                            onChange={(e) => setChangePwForm((p) => ({ ...p, currentPassword: e.target.value }))}
+                            required
+                            className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-3 py-2.5 text-sm text-slate-900 dark:text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium text-slate-900 dark:text-slate-300">New Password</label>
+                          <input
+                            type="password"
+                            value={changePwForm.newPassword}
+                            onChange={(e) => setChangePwForm((p) => ({ ...p, newPassword: e.target.value }))}
+                            required
+                            minLength={8}
+                            className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-3 py-2.5 text-sm text-slate-900 dark:text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium text-slate-900 dark:text-slate-300">Confirm New Password</label>
+                          <input
+                            type="password"
+                            value={changePwForm.confirmPassword}
+                            onChange={(e) => setChangePwForm((p) => ({ ...p, confirmPassword: e.target.value }))}
+                            required
+                            minLength={8}
+                            className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-3 py-2.5 text-sm text-slate-900 dark:text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
+                          />
+                        </div>
+
+                        {changePwError && (
+                          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-300">
+                            {changePwError}
+                          </div>
+                        )}
+
+                        {changePwSuccess && (
+                          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-900/20 dark:text-emerald-300">
+                            {changePwSuccess}
+                          </div>
+                        )}
+
+                        <div>
+                          <button
+                            type="submit"
+                            disabled={isChangingPw}
+                            className="inline-flex items-center justify-center rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70 transition-colors"
+                          >
+                            {isChangingPw ? "Changing..." : "Change Password"}
+                          </button>
+                        </div>
+                      </form>
                     </section>
                   )}
                 </main>

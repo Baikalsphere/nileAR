@@ -55,45 +55,45 @@ export default function HotelFinanceClient() {
     `₹${Math.round(amount).toLocaleString('en-IN')}`
 
   const summary = dashboardData?.summary ?? {
-    totalInvoiced: 0,
+    totalRevenue: 0,
     totalCollected: 0,
-    totalOutstanding: 0,
-    overdueInvoices: 0
+    totalPending: 0,
+    activeBookings: 0
   }
 
-  const invoiceVsCollection = dashboardData?.invoiceVsCollection ?? [
-    { label: 'Week 1', invoiced: 0, collected: 0 },
-    { label: 'Week 2', invoiced: 0, collected: 0 },
-    { label: 'Week 3', invoiced: 0, collected: 0 },
-    { label: 'Week 4', invoiced: 0, collected: 0 }
+  const bookingTrend = dashboardData?.bookingTrend ?? [
+    { label: 'Week 1', booked: 0, completed: 0 },
+    { label: 'Week 2', booked: 0, completed: 0 },
+    { label: 'Week 3', booked: 0, completed: 0 },
+    { label: 'Week 4', booked: 0, completed: 0 }
   ]
 
-  const agingBuckets = dashboardData?.aging?.buckets ?? [
-    { label: '0-30 Days', amount: 0, percentage: 0 },
-    { label: '31-60 Days', amount: 0, percentage: 0 },
-    { label: '60+ Days', amount: 0, percentage: 0 }
+  const statusBuckets = dashboardData?.statusBreakdown?.buckets ?? [
+    { label: 'Active', count: 0, percentage: 0 },
+    { label: 'Completed', count: 0, percentage: 0 },
+    { label: 'Cancelled', count: 0, percentage: 0 }
   ]
 
-  const topOrganizationsOutstanding = dashboardData?.topOrganizationsOutstanding ?? []
+  const topOrganizations = dashboardData?.topOrganizations ?? []
 
-  const outstandingLevel =
-    summary.totalOutstanding >= 500000
+  const pendingLevel =
+    summary.totalPending >= 500000
       ? 'High'
-      : summary.totalOutstanding >= 100000
+      : summary.totalPending >= 100000
       ? 'Medium'
       : 'Low'
 
   const chartConfig = useMemo(() => {
     const maxValue = Math.max(
       1,
-      ...invoiceVsCollection.flatMap((point) => [point.invoiced, point.collected])
+      ...bookingTrend.flatMap((point) => [point.booked, point.completed])
     )
 
     const startX = 50
     const endX = 780
     const startY = 200
     const chartHeight = 180
-    const step = invoiceVsCollection.length > 1 ? (endX - startX) / (invoiceVsCollection.length - 1) : 0
+    const step = bookingTrend.length > 1 ? (endX - startX) / (bookingTrend.length - 1) : 0
 
     const toY = (value: number) => startY - (value / maxValue) * chartHeight
     const toPath = (values: number[]) => {
@@ -106,21 +106,22 @@ export default function HotelFinanceClient() {
     }
 
     return {
-      invoicedPath: toPath(invoiceVsCollection.map((point) => point.invoiced)),
-      collectedPath: toPath(invoiceVsCollection.map((point) => point.collected))
+      bookedPath: toPath(bookingTrend.map((point) => point.booked)),
+      completedPath: toPath(bookingTrend.map((point) => point.completed))
     }
-  }, [invoiceVsCollection])
+  }, [bookingTrend])
 
   const donutConfig = useMemo(() => {
     const circumference = 2 * Math.PI * 40
+    const totalPct = statusBuckets.reduce((sum, b) => sum + b.percentage, 0)
     let offset = 0
 
-    return agingBuckets.map((bucket) => {
-      const fraction = Math.max(0, bucket.percentage) / 100
+    return statusBuckets.map((bucket) => {
+      const fraction = totalPct > 0 ? Math.max(0, bucket.percentage) / 100 : 0
       const dash = fraction * circumference
       const config = {
         label: bucket.label,
-        amount: bucket.amount,
+        count: bucket.count,
         percentage: bucket.percentage,
         strokeDasharray: `${dash} ${Math.max(0, circumference - dash)}`,
         strokeDashoffset: -offset
@@ -128,9 +129,9 @@ export default function HotelFinanceClient() {
       offset += dash
       return config
     })
-  }, [agingBuckets])
+  }, [statusBuckets])
 
-  const topOutstandingMax = Math.max(1, ...topOrganizationsOutstanding.map((item) => item.amount))
+  const topOrgMax = Math.max(1, ...topOrganizations.map((item) => item.amount))
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background-light dark:bg-background-dark text-text-main-light dark:text-text-main-dark transition-colors duration-200">
@@ -188,80 +189,80 @@ export default function HotelFinanceClient() {
             
             {/* KPI Stats Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-              {/* Total Invoiced */}
+              {/* Total Revenue */}
               <div className="bg-surface-light dark:bg-surface-dark rounded-xl p-5 shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)] border border-slate-100 dark:border-slate-800 hover:border-primary/30 transition-colors">
                 <div className="flex justify-between items-start mb-4">
                   <div className="p-2 bg-blue-50 dark:bg-blue-900/20 rounded-lg text-primary">
-                    <span className="material-symbols-outlined">receipt</span>
+                    <span className="material-symbols-outlined">payments</span>
                   </div>
                   <span className="flex items-center text-xs font-bold text-success bg-success/10 px-2 py-1 rounded-full">All Time</span>
                 </div>
-                <p className="text-text-sub-light dark:text-text-sub-dark text-sm font-medium">Total Invoiced</p>
+                <p className="text-text-sub-light dark:text-text-sub-dark text-sm font-medium">Total Revenue</p>
                 <h3 className="text-2xl font-bold text-text-main-light dark:text-text-main-dark mt-1">
-                  {isLoading ? '...' : formatCurrency(summary.totalInvoiced)}
+                  {isLoading ? '...' : formatCurrency(summary.totalRevenue)}
                 </h3>
               </div>
               
-              {/* Total Collected */}
+              {/* Collected Revenue */}
               <div className="bg-surface-light dark:bg-surface-dark rounded-xl p-5 shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)] border border-slate-100 dark:border-slate-800 hover:border-primary/30 transition-colors">
                 <div className="flex justify-between items-start mb-4">
                   <div className="p-2 bg-green-50 dark:bg-green-900/20 rounded-lg text-success">
                     <span className="material-symbols-outlined">savings</span>
                   </div>
-                  <span className="flex items-center text-xs font-bold text-success bg-success/10 px-2 py-1 rounded-full">Paid</span>
+                  <span className="flex items-center text-xs font-bold text-success bg-success/10 px-2 py-1 rounded-full">Completed</span>
                 </div>
-                <p className="text-text-sub-light dark:text-text-sub-dark text-sm font-medium">Total Collected</p>
+                <p className="text-text-sub-light dark:text-text-sub-dark text-sm font-medium">Collected Revenue</p>
                 <h3 className="text-2xl font-bold text-text-main-light dark:text-text-main-dark mt-1">
                   {isLoading ? '...' : formatCurrency(summary.totalCollected)}
                 </h3>
               </div>
               
-              {/* Outstanding Amount */}
+              {/* Pending Amount */}
               <div className="bg-surface-light dark:bg-surface-dark rounded-xl p-5 shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)] border border-slate-100 dark:border-slate-800 hover:border-primary/30 transition-colors">
                 <div className="flex justify-between items-start mb-4">
                   <div className="p-2 bg-amber-50 dark:bg-amber-900/20 rounded-lg text-warning">
                     <span className="material-symbols-outlined">pending_actions</span>
                   </div>
-                  <span className="flex items-center text-xs font-bold text-warning bg-warning/10 px-2 py-1 rounded-full">{outstandingLevel}</span>
+                  <span className="flex items-center text-xs font-bold text-warning bg-warning/10 px-2 py-1 rounded-full">{pendingLevel}</span>
                 </div>
-                <p className="text-text-sub-light dark:text-text-sub-dark text-sm font-medium">Outstanding Amount</p>
+                <p className="text-text-sub-light dark:text-text-sub-dark text-sm font-medium">Pending Amount</p>
                 <h3 className="text-2xl font-bold text-text-main-light dark:text-text-main-dark mt-1">
-                  {isLoading ? '...' : formatCurrency(summary.totalOutstanding)}
+                  {isLoading ? '...' : formatCurrency(summary.totalPending)}
                 </h3>
               </div>
               
-              {/* Overdue Invoices */}
+              {/* Active Bookings */}
               <div className="bg-surface-light dark:bg-surface-dark rounded-xl p-5 shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)] border border-slate-100 dark:border-slate-800 hover:border-primary/30 transition-colors">
                 <div className="flex justify-between items-start mb-4">
-                  <div className="p-2 bg-red-50 dark:bg-red-900/20 rounded-lg text-danger">
-                    <span className="material-symbols-outlined">warning</span>
+                  <div className="p-2 bg-purple-50 dark:bg-purple-900/20 rounded-lg text-purple-600">
+                    <span className="material-symbols-outlined">hotel</span>
                   </div>
-                  <span className="flex items-center text-xs font-bold text-danger bg-danger/10 px-2 py-1 rounded-full">Live</span>
+                  <span className="flex items-center text-xs font-bold text-primary bg-primary/10 px-2 py-1 rounded-full">Live</span>
                 </div>
-                <p className="text-text-sub-light dark:text-text-sub-dark text-sm font-medium">Overdue Invoices</p>
+                <p className="text-text-sub-light dark:text-text-sub-dark text-sm font-medium">Active Bookings</p>
                 <h3 className="text-2xl font-bold text-text-main-light dark:text-text-main-dark mt-1">
-                  {isLoading ? '...' : summary.overdueInvoices}
+                  {isLoading ? '...' : summary.activeBookings}
                 </h3>
               </div>
             </div>
             
             {/* Charts Section */}
             <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-              {/* Invoice vs Collection Chart */}
+              {/* Booking Trend Chart */}
               <div className="xl:col-span-2 bg-surface-light dark:bg-surface-dark rounded-xl p-6 shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)] border border-slate-100 dark:border-slate-800">
                 <div className="flex flex-wrap gap-4 items-center justify-between mb-6">
                   <div>
-                    <h3 className="text-lg font-bold text-text-main-light dark:text-text-main-dark">Invoice vs Collection</h3>
-                    <p className="text-sm text-text-sub-light dark:text-text-sub-dark">Comparison of billed volume vs collected revenue</p>
+                    <h3 className="text-lg font-bold text-text-main-light dark:text-text-main-dark">Booking Trend</h3>
+                    <p className="text-sm text-text-sub-light dark:text-text-sub-dark">New bookings vs completed stays this month</p>
                   </div>
                   <div className="flex items-center gap-4">
                     <div className="flex items-center gap-2">
                       <div className="w-3 h-3 rounded-full bg-primary"></div>
-                      <span className="text-xs text-text-sub-light dark:text-text-sub-dark">Invoiced</span>
+                      <span className="text-xs text-text-sub-light dark:text-text-sub-dark">Booked</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <div className="w-3 h-3 rounded-full bg-success"></div>
-                      <span className="text-xs text-text-sub-light dark:text-text-sub-dark">Collected</span>
+                      <span className="text-xs text-text-sub-light dark:text-text-sub-dark">Completed</span>
                     </div>
                   </div>
                 </div>
@@ -275,27 +276,27 @@ export default function HotelFinanceClient() {
                     <line x1="0" y1="128" x2="800" y2="128" stroke="currentColor" strokeWidth="1" className="text-slate-200 dark:text-slate-700" strokeDasharray="4 4" />
                     <line x1="0" y1="192" x2="800" y2="192" stroke="currentColor" strokeWidth="1" className="text-slate-200 dark:text-slate-700" strokeDasharray="4 4" />
                     
-                    {/* Invoiced line (blue) */}
+                    {/* Booked line (blue) */}
                     <path
-                      d={chartConfig.invoicedPath}
+                      d={chartConfig.bookedPath}
                       fill="none"
                       stroke="#0651ED"
                       strokeWidth="3"
                       className="drop-shadow-lg"
                     />
                     
-                    {/* Collected line (green) */}
+                    {/* Completed line (green) */}
                     <path
-                      d={chartConfig.collectedPath}
+                      d={chartConfig.completedPath}
                       fill="none"
                       stroke="#10B981"
                       strokeWidth="3"
                       strokeDasharray="5 5"
                     />
                     
-                    {/* Month labels */}
-                    {invoiceVsCollection.map((point, index) => {
-                      const x = invoiceVsCollection.length > 1 ? 50 + (730 / (invoiceVsCollection.length - 1)) * index : 50
+                    {/* Week labels */}
+                    {bookingTrend.map((point, index) => {
+                      const x = bookingTrend.length > 1 ? 50 + (730 / (bookingTrend.length - 1)) * index : 50
                       return (
                         <text key={point.label} x={x} y="245" className="text-xs fill-slate-400" textAnchor="middle">
                           {point.label}
@@ -306,16 +307,16 @@ export default function HotelFinanceClient() {
                 </div>
               </div>
               
-              {/* Aging Analysis */}
+              {/* Booking Status Breakdown */}
               <div className="bg-surface-light dark:bg-surface-dark rounded-xl p-6 shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)] border border-slate-100 dark:border-slate-800">
-                <h3 className="text-lg font-bold text-text-main-light dark:text-text-main-dark mb-2">Aging Analysis</h3>
-                <p className="text-sm text-text-sub-light dark:text-text-sub-dark mb-6">Breakdown of outstanding invoices by age.</p>
+                <h3 className="text-lg font-bold text-text-main-light dark:text-text-main-dark mb-2">Booking Status</h3>
+                <p className="text-sm text-text-sub-light dark:text-text-sub-dark mb-6">Breakdown of all bookings by status</p>
                 
                 {/* Donut Chart */}
                 <div className="flex items-center justify-center mb-6">
                   <div className="relative w-48 h-48">
                     <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
-                      {/* 0-30 Days - Blue (60%) */}
+                      {/* Active - Blue */}
                       <circle
                         cx="50"
                         cy="50"
@@ -326,18 +327,18 @@ export default function HotelFinanceClient() {
                         strokeDasharray={donutConfig[0]?.strokeDasharray ?? '0 251.2'}
                         strokeDashoffset={donutConfig[0]?.strokeDashoffset ?? 0}
                       />
-                      {/* 31-60 Days - Orange (30%) */}
+                      {/* Completed - Green */}
                       <circle
                         cx="50"
                         cy="50"
                         r="40"
                         fill="none"
-                        stroke="#F59E0B"
+                        stroke="#10B981"
                         strokeWidth="20"
                         strokeDasharray={donutConfig[1]?.strokeDasharray ?? '0 251.2'}
                         strokeDashoffset={donutConfig[1]?.strokeDashoffset ?? 0}
                       />
-                      {/* 60+ Days - Red (10%) */}
+                      {/* Cancelled - Red */}
                       <circle
                         cx="50"
                         cy="50"
@@ -350,9 +351,9 @@ export default function HotelFinanceClient() {
                       />
                     </svg>
                     <div className="absolute inset-0 flex flex-col items-center justify-center">
-                      <p className="text-xs text-text-sub-light dark:text-text-sub-dark">Total Due</p>
+                      <p className="text-xs text-text-sub-light dark:text-text-sub-dark">Total</p>
                       <p className="text-xl font-bold text-text-main-light dark:text-text-main-dark">
-                        {isLoading ? '...' : formatCurrency(summary.totalOutstanding)}
+                        {isLoading ? '...' : dashboardData?.statusBreakdown?.total ?? 0}
                       </p>
                     </div>
                   </div>
@@ -363,35 +364,35 @@ export default function HotelFinanceClient() {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <div className="w-3 h-3 rounded-full bg-primary"></div>
-                      <span className="text-sm text-text-main-light dark:text-text-main-dark">0-30 Days</span>
+                      <span className="text-sm text-text-main-light dark:text-text-main-dark">Active</span>
                     </div>
-                    <span className="text-sm font-bold text-text-main-light dark:text-text-main-dark">{Math.round(agingBuckets[0]?.percentage ?? 0)}%</span>
+                    <span className="text-sm font-bold text-text-main-light dark:text-text-main-dark">{statusBuckets[0]?.count ?? 0}</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 rounded-full bg-warning"></div>
-                      <span className="text-sm text-text-main-light dark:text-text-main-dark">31-60 Days</span>
+                      <div className="w-3 h-3 rounded-full bg-success"></div>
+                      <span className="text-sm text-text-main-light dark:text-text-main-dark">Completed</span>
                     </div>
-                    <span className="text-sm font-bold text-text-main-light dark:text-text-main-dark">{Math.round(agingBuckets[1]?.percentage ?? 0)}%</span>
+                    <span className="text-sm font-bold text-text-main-light dark:text-text-main-dark">{statusBuckets[1]?.count ?? 0}</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <div className="w-3 h-3 rounded-full bg-danger"></div>
-                      <span className="text-sm text-text-main-light dark:text-text-main-dark">60+ Days</span>
+                      <span className="text-sm text-text-main-light dark:text-text-main-dark">Cancelled</span>
                     </div>
-                    <span className="text-sm font-bold text-text-main-light dark:text-text-main-dark">{Math.round(agingBuckets[2]?.percentage ?? 0)}%</span>
+                    <span className="text-sm font-bold text-text-main-light dark:text-text-main-dark">{statusBuckets[2]?.count ?? 0}</span>
                   </div>
                 </div>
               </div>
             </div>
             
-            {/* Top Organizations Outstanding */}
+            {/* Top Organizations by Revenue */}
             <div className="bg-surface-light dark:bg-surface-dark rounded-xl p-6 shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)] border border-slate-100 dark:border-slate-800">
-              <h3 className="text-lg font-bold text-text-main-light dark:text-text-main-dark mb-6">Top Organizations Outstanding</h3>
+              <h3 className="text-lg font-bold text-text-main-light dark:text-text-main-dark mb-6">Top Organizations by Revenue</h3>
               
               <div className="space-y-4">
-                {topOrganizationsOutstanding.length > 0 ? (
-                  topOrganizationsOutstanding.map((organization) => (
+                {topOrganizations.length > 0 ? (
+                  topOrganizations.map((organization) => (
                     <div key={organization.name}>
                       <div className="flex items-center justify-between">
                         <span className="text-sm font-medium text-text-main-light dark:text-text-main-dark">{organization.name}</span>
@@ -400,28 +401,28 @@ export default function HotelFinanceClient() {
                       <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-2 mt-2">
                         <div
                           className="bg-primary h-2 rounded-full"
-                          style={{ width: `${Math.max(6, (organization.amount / topOutstandingMax) * 100)}%` }}
+                          style={{ width: `${Math.max(6, (organization.amount / topOrgMax) * 100)}%` }}
                         ></div>
                       </div>
                     </div>
                   ))
                 ) : (
-                  <p className="text-sm text-text-sub-light dark:text-text-sub-dark">No outstanding balances at the moment.</p>
+                  <p className="text-sm text-text-sub-light dark:text-text-sub-dark">No booking data available yet.</p>
                 )}
               </div>
             </div>
             
-            {/* Send Reminders Card */}
+            {/* Quick Actions Card */}
             <div className="bg-primary rounded-xl p-6 text-white shadow-lg">
               <div className="flex items-start gap-4">
                 <div className="p-3 bg-white/20 rounded-lg">
-                  <span className="material-symbols-outlined text-4xl">mark_email_unread</span>
+                  <span className="material-symbols-outlined text-4xl">hotel</span>
                 </div>
                 <div className="flex-1">
-                  <h3 className="text-xl font-bold mb-2">Send Reminders</h3>
-                  <p className="text-sm text-blue-100 mb-4">{summary.overdueInvoices} overdue invoices need attention.</p>
+                  <h3 className="text-xl font-bold mb-2">Booking Overview</h3>
+                  <p className="text-sm text-blue-100 mb-4">{summary.activeBookings} active booking{summary.activeBookings !== 1 ? 's' : ''} require{summary.activeBookings === 1 ? 's' : ''} attention.</p>
                   <button className="px-6 py-2.5 bg-white text-primary rounded-lg text-sm font-bold hover:bg-blue-50 transition-colors">
-                    Review &amp; Send
+                    View Bookings
                   </button>
                 </div>
               </div>

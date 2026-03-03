@@ -164,10 +164,7 @@ export default function EmployeeStaysClient() {
                   <p className="text-slate-500 dark:text-slate-400 text-sm font-medium uppercase tracking-wider">Total Spend YTD</p>
                 </div>
                 <p className="text-slate-900 dark:text-white text-2xl font-bold tracking-tight">₹{formatInrAmount(totalSpend)}</p>
-                <p className="text-emerald-600 dark:text-emerald-400 text-xs font-medium flex items-center gap-1 mt-1">
-                  <span className="material-symbols-outlined text-[14px]">trending_up</span>
-                  +12% vs last month
-                </p>
+                <p className="text-slate-500 dark:text-slate-400 text-xs font-medium mt-1">Year to date</p>
               </div>
               <div className="flex flex-col gap-1 p-5 rounded-xl bg-white dark:bg-[#1a202c] border border-slate-200 dark:border-slate-700 shadow-sm">
                 <div className="flex items-center gap-2 mb-2">
@@ -254,6 +251,12 @@ export default function EmployeeStaysClient() {
                       <tr>
                         <td colSpan={9} className="p-6 text-center text-sm text-slate-500 dark:text-slate-400">Loading employee stays...</td>
                       </tr>
+                    ) : filteredStays.length === 0 ? (
+                      <tr>
+                        <td colSpan={9} className="p-10 text-center text-sm text-slate-500 dark:text-slate-400">
+                          {stays.length === 0 ? 'No employee stays recorded yet.' : 'No stays match your search.'}
+                        </td>
+                      </tr>
                     ) : filteredStays.map((stay) => (
                       <tr
                         key={stay.id}
@@ -318,23 +321,9 @@ export default function EmployeeStaysClient() {
               {/* Pagination */}
               <div className="p-4 border-t border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row items-center justify-between gap-4">
                 <p className="text-sm text-slate-600 dark:text-slate-400">
-                  Showing <span className="font-bold text-slate-900 dark:text-white">1</span> to{' '}
-                  <span className="font-bold text-slate-900 dark:text-white">{filteredStays.length}</span> of{' '}
+                  Showing <span className="font-bold text-slate-900 dark:text-white">{filteredStays.length}</span> of{' '}
                   <span className="font-bold text-slate-900 dark:text-white">{stays.length}</span> records
                 </p>
-                <div className="flex items-center gap-2">
-                  <button className="p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50">
-                    <span className="material-symbols-outlined text-[20px]">chevron_left</span>
-                  </button>
-                  <button className="w-8 h-8 flex items-center justify-center rounded-lg bg-primary text-white text-sm font-medium">1</button>
-                  <button className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-400 text-sm font-medium transition-colors">2</button>
-                  <button className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-400 text-sm font-medium transition-colors">3</button>
-                  <span className="text-slate-600 dark:text-slate-400 px-1">...</span>
-                  <button className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-400 text-sm font-medium transition-colors">6</button>
-                  <button className="p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700">
-                    <span className="material-symbols-outlined text-[20px]">chevron_right</span>
-                  </button>
-                </div>
               </div>
             </div>
           </div>
