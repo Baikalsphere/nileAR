@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS hotel_profiles (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id uuid UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   hotel_name text,
+  entity_name text,
   gst text,
   location text,
   logo_url text,

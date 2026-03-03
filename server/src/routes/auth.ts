@@ -75,6 +75,7 @@ const corporateProfileSchema = z.object({
 
 const hotelProfileSchema = z.object({
   hotelName: z.string().min(2).max(160),
+  entityName: z.string().max(200).optional().nullable(),
   gst: z.string().max(64).optional().nullable(),
   location: z.string().max(160).optional().nullable(),
   logoUrl: z.string().url().max(2000).optional().nullable(),
@@ -999,7 +1000,7 @@ router.get("/hotel/me", async (req, res, next) => {
 
     const result = await query(
       `SELECT u.id, u.email, u.role,
-              hp.hotel_name, hp.gst, hp.location, hp.logo_url,
+              hp.hotel_name, hp.entity_name, hp.gst, hp.location, hp.logo_url,
               hp.contact_email, hp.contact_phone, hp.address
        FROM users u
        LEFT JOIN hotel_profiles hp ON hp.user_id = u.id
@@ -1049,6 +1050,7 @@ router.get("/hotel/me", async (req, res, next) => {
         },
         profile: {
           hotelName: row.hotel_name,
+          entityName: row.entity_name,
           gst: row.gst,
           location: row.location,
           logoUrl: resolveHotelLogoUrl(row.id, row.logo_url),
@@ -1069,6 +1071,7 @@ router.get("/hotel/me", async (req, res, next) => {
       },
       profile: {
         hotelName: row.hotel_name,
+        entityName: row.entity_name,
         gst: row.gst,
         location: row.location,
         logoUrl: resolveHotelLogoUrl(row.id, row.logo_url),
@@ -1191,25 +1194,28 @@ router.put("/hotel/profile", async (req, res, next) => {
       `INSERT INTO hotel_profiles (
          user_id,
          hotel_name,
+         entity_name,
          gst,
          location,
          contact_email,
          contact_phone,
          address
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (user_id)
        DO UPDATE SET
          hotel_name = EXCLUDED.hotel_name,
+         entity_name = EXCLUDED.entity_name,
          gst = EXCLUDED.gst,
          location = EXCLUDED.location,
          contact_email = EXCLUDED.contact_email,
          contact_phone = EXCLUDED.contact_phone,
          address = EXCLUDED.address
-       RETURNING user_id, hotel_name, gst, location, logo_url, contact_email, contact_phone, address`,
+       RETURNING user_id, hotel_name, entity_name, gst, location, logo_url, contact_email, contact_phone, address`,
       [
         payload.sub,
         form.hotelName.trim(),
+        normalizeOptional(form.entityName),
         normalizeOptional(form.gst),
         normalizeOptional(form.location),
         normalizeOptional(form.contactEmail)?.toLowerCase() ?? null,
@@ -1238,6 +1244,7 @@ router.put("/hotel/profile", async (req, res, next) => {
       },
       profile: {
         hotelName: profile.hotel_name,
+        entityName: profile.entity_name,
         gst: profile.gst,
         location: profile.location,
         logoUrl: resolveHotelLogoUrl(user.id, profile.logo_url),

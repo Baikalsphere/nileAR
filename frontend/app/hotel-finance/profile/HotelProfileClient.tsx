@@ -15,6 +15,7 @@ export default function HotelProfileClient() {
   const [success, setSuccess] = useState<string | null>(null)
 
   const [hotelName, setHotelName] = useState('')
+  const [entityName, setEntityName] = useState('')
   const [gst, setGst] = useState('')
   const [location, setLocation] = useState('')
   const [logoUrl, setLogoUrl] = useState<string | null>(null)
@@ -55,6 +56,7 @@ export default function HotelProfileClient() {
       try {
         const response = await fetchHotelProfile()
         setHotelName(response.profile.hotelName ?? '')
+        setEntityName(response.profile.entityName ?? '')
         setGst(response.profile.gst ?? '')
         setLocation(response.profile.location ?? '')
         setLogoUrl(response.profile.logoUrl)
@@ -115,6 +117,7 @@ export default function HotelProfileClient() {
     try {
       const response = await updateHotelProfile({
         hotelName,
+        entityName: entityName || null,
         gst: gst || null,
         location: location || null,
         contactEmail: contactEmail || null,
@@ -123,6 +126,7 @@ export default function HotelProfileClient() {
       })
 
       setHotelName(response.profile.hotelName ?? '')
+      setEntityName(response.profile.entityName ?? '')
       setGst(response.profile.gst ?? '')
       setLocation(response.profile.location ?? '')
       setLogoUrl(response.profile.logoUrl)
@@ -279,6 +283,17 @@ export default function HotelProfileClient() {
                       className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                       placeholder="Enter hotel name"
                     />
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="mb-1 block text-sm font-semibold text-text-main-light dark:text-text-main-dark">Entity Name</label>
+                    <input
+                      value={entityName}
+                      onChange={(event) => setEntityName(event.target.value)}
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                      placeholder="Legal / registered entity name"
+                    />
+                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">The legal entity name used on invoices and contracts.</p>
                   </div>
 
                   <div>

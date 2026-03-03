@@ -15,6 +15,7 @@ export interface AuthResponse {
 
 export interface HotelProfile {
   hotelName: string | null;
+  entityName: string | null;
   gst: string | null;
   location: string | null;
   logoUrl: string | null;
@@ -231,6 +232,7 @@ export const fetchHotelProfile = async () => {
 
 export const updateHotelProfile = async (payload: {
   hotelName: string;
+  entityName?: string | null;
   gst?: string | null;
   location?: string | null;
   contactEmail?: string | null;
