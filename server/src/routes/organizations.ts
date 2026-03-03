@@ -26,7 +26,8 @@ const createOrganizationSchema = z.object({
   gst: z.string().max(32).optional().nullable(),
   creditPeriod: z.string().max(60).optional().nullable(),
   paymentTerms: z.string().max(120).optional().nullable(),
-  status: z.enum(["active", "on-hold", "inactive"]).default("active")
+  status: z.enum(["active", "on-hold", "inactive"]).default("active"),
+  initialOutstanding: z.number().min(0).max(999999999999).optional().nullable()
 });
 
 const lookupOrganizationQuerySchema = z.object({
@@ -35,6 +36,15 @@ const lookupOrganizationQuerySchema = z.object({
 
 const linkOrganizationSchema = z.object({
   organizationId: z.string().min(2).max(40)
+});
+
+const updateOrganizationSchema = z.object({
+  name: z.string().min(2).max(160).optional(),
+  gst: z.string().max(32).optional().nullable(),
+  creditPeriod: z.string().max(60).optional().nullable(),
+  paymentTerms: z.string().max(120).optional().nullable(),
+  status: z.enum(["active", "on-hold", "inactive"]).optional(),
+  initialOutstanding: z.number().min(0).max(999999999999).optional().nullable()
 });
 
 const sendCredentialsSchema = z.object({
@@ -1069,9 +1079,10 @@ router.get("/", async (req: Request, res: Response, next: NextFunction) => {
               o.payment_terms,
               o.status,
               o.created_at,
+              o.initial_outstanding,
               c.status AS contract_status,
               COALESCE(SUM(CASE WHEN i.status = 'paid' THEN i.amount ELSE 0 END), 0) AS amount_received,
-              COALESCE(SUM(CASE WHEN i.status IN ('unpaid', 'overdue') THEN i.amount ELSE 0 END), 0) AS outstanding_amount
+              COALESCE(o.initial_outstanding, 0) + COALESCE(SUM(CASE WHEN i.status IN ('unpaid', 'overdue') THEN i.amount ELSE 0 END), 0) AS outstanding_amount
        FROM organizations o
        LEFT JOIN LATERAL (
          SELECT status
@@ -1086,7 +1097,7 @@ router.get("/", async (req: Request, res: Response, next: NextFunction) => {
                                  AND hb.created_by = ho.hotel_user_id::text
        LEFT JOIN corporate_invoices i ON i.booking_id = hb.id
        WHERE ho.hotel_user_id = $1
-       GROUP BY o.id, o.name, o.gst, o.credit_period, o.payment_terms, o.status, o.created_at, c.status
+       GROUP BY o.id, o.name, o.gst, o.credit_period, o.payment_terms, o.status, o.created_at, o.initial_outstanding, c.status
        ORDER BY o.created_at DESC`
       ,
       [userId]
@@ -1102,6 +1113,7 @@ router.get("/", async (req: Request, res: Response, next: NextFunction) => {
       contractStatus: (row.contract_status as string | null) ?? null,
       amountReceived: Number(row.amount_received ?? 0),
       outstandingAmount: Number(row.outstanding_amount ?? 0),
+      initialOutstanding: Number(row.initial_outstanding ?? 0),
       createdAt: row.created_at as string
     }));
 
@@ -1632,6 +1644,83 @@ router.post("/:organizationId/contracts/:contractId/send-sign-link", async (req:
   }
 });
 
+router.put("/:organizationId", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user?.id;
+    const organizationId = req.params.organizationId;
+    const payload = updateOrganizationSchema.parse(req.body);
+
+    const accessCheck = await query(
+      `SELECT 1 FROM hotel_organizations WHERE organization_id = $1 AND hotel_user_id = $2 LIMIT 1`,
+      [organizationId, userId]
+    );
+    if (accessCheck.rowCount === 0) {
+      return res.status(404).json({ error: { message: "Organization not found" } });
+    }
+
+    const setClauses: string[] = ["updated_at = now()"];
+    const values: any[] = [];
+    let paramIndex = 1;
+
+    if (payload.name !== undefined) {
+      setClauses.push(`name = $${paramIndex}`);
+      values.push(payload.name.trim());
+      paramIndex += 1;
+    }
+    if (payload.gst !== undefined) {
+      setClauses.push(`gst = $${paramIndex}`);
+      values.push(payload.gst ?? null);
+      paramIndex += 1;
+    }
+    if (payload.creditPeriod !== undefined) {
+      setClauses.push(`credit_period = $${paramIndex}`);
+      values.push(payload.creditPeriod ?? null);
+      paramIndex += 1;
+    }
+    if (payload.paymentTerms !== undefined) {
+      setClauses.push(`payment_terms = $${paramIndex}`);
+      values.push(payload.paymentTerms ?? null);
+      paramIndex += 1;
+    }
+    if (payload.status !== undefined) {
+      setClauses.push(`status = $${paramIndex}`);
+      values.push(payload.status);
+      paramIndex += 1;
+    }
+    if (payload.initialOutstanding !== undefined) {
+      setClauses.push(`initial_outstanding = $${paramIndex}`);
+      values.push(payload.initialOutstanding ?? 0);
+      paramIndex += 1;
+    }
+
+    values.push(organizationId);
+    const result = await query(
+      `UPDATE organizations SET ${setClauses.join(", ")} WHERE id = $${paramIndex}
+       RETURNING id, name, gst, credit_period, payment_terms, status, initial_outstanding`,
+      values
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: { message: "Organization not found" } });
+    }
+
+    const row = result.rows[0];
+    return res.status(200).json({
+      organization: {
+        id: row.id,
+        name: row.name,
+        gst: row.gst,
+        creditPeriod: row.credit_period,
+        paymentTerms: row.payment_terms,
+        status: row.status,
+        initialOutstanding: Number(row.initial_outstanding ?? 0)
+      }
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.post("/", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const userId = req.user?.id;
@@ -1648,10 +1737,11 @@ router.post("/", async (req: Request, res: Response, next: NextFunction) => {
         const created = await query(
           `INSERT INTO organizations (
              id, name, gst, credit_period, payment_terms, status,
-             contact_email, corporate_user_id, corporate_password_hash, created_by_user_id
+             contact_email, corporate_user_id, corporate_password_hash, created_by_user_id,
+             initial_outstanding
            )
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-           RETURNING id, name, gst, credit_period, payment_terms, status, corporate_user_id`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+           RETURNING id, name, gst, credit_period, payment_terms, status, corporate_user_id, initial_outstanding`,
           [
             organizationId,
             payload.name.trim(),
@@ -1662,7 +1752,8 @@ router.post("/", async (req: Request, res: Response, next: NextFunction) => {
             normalizedCorporateEmail,
             corporateUserId,
             corporatePasswordHash,
-            userId
+            userId,
+            payload.initialOutstanding ?? 0
           ]
         );
 

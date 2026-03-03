@@ -75,6 +75,7 @@ ALTER TABLE organizations
   ADD COLUMN IF NOT EXISTS contact_email citext,
   ADD COLUMN IF NOT EXISTS contact_phone text,
   ADD COLUMN IF NOT EXISTS created_by_user_id uuid REFERENCES users(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS initial_outstanding numeric(12,2) NOT NULL DEFAULT 0,
   ADD COLUMN IF NOT EXISTS contact_person text,
   ADD COLUMN IF NOT EXISTS billing_address text,
   ADD COLUMN IF NOT EXISTS pan_card text,

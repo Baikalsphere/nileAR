@@ -24,6 +24,7 @@ interface Organization {
   contractStatus?: 'draft' | 'sent' | 'signed' | null
   amountReceived: number
   pendingPayment: number
+  initialOutstanding: number
 }
 
 interface ApiOrganization {
@@ -36,6 +37,7 @@ interface ApiOrganization {
   contractStatus?: 'draft' | 'sent' | 'signed' | null
   amountReceived?: number
   outstandingAmount?: number
+  initialOutstanding?: number
 }
 
 interface GeneratedCredentials {
@@ -201,7 +203,8 @@ const toOrganization = (apiOrg: ApiOrganization): Organization => {
     status: apiOrg.status,
     contractStatus: apiOrg.contractStatus ?? null,
     amountReceived,
-    pendingPayment
+    pendingPayment,
+    initialOutstanding: Number(apiOrg.initialOutstanding ?? 0)
   }
 }
 
@@ -218,6 +221,7 @@ export default function OrganizationsClient() {
   const [creditPeriod, setCreditPeriod] = useState('30 Days')
   const [paymentTerms, setPaymentTerms] = useState('Net 30')
   const [registerStatus, setRegisterStatus] = useState<OrganizationStatus>('active')
+  const [initialOutstanding, setInitialOutstanding] = useState('')
   const [registerError, setRegisterError] = useState<string | null>(null)
   const [isRegistering, setIsRegistering] = useState(false)
   const [isLinkingExisting, setIsLinkingExisting] = useState(false)
@@ -227,6 +231,17 @@ export default function OrganizationsClient() {
   const [isSendingCredentials, setIsSendingCredentials] = useState(false)
   const [sendCredentialsMessage, setSendCredentialsMessage] = useState<string | null>(null)
   const [sendCredentialsError, setSendCredentialsError] = useState<string | null>(null)
+
+  const [editingOrg, setEditingOrg] = useState<Organization | null>(null)
+  const [editName, setEditName] = useState('')
+  const [editGst, setEditGst] = useState('')
+  const [editCreditPeriod, setEditCreditPeriod] = useState('')
+  const [editPaymentTerms, setEditPaymentTerms] = useState('')
+  const [editStatus, setEditStatus] = useState<OrganizationStatus>('active')
+  const [editOutstanding, setEditOutstanding] = useState('')
+  const [editError, setEditError] = useState<string | null>(null)
+  const [editSuccess, setEditSuccess] = useState<string | null>(null)
+  const [isSavingEdit, setIsSavingEdit] = useState(false)
 
   const getAuthHeaders = () => {
     const token = tokenStorage.get()
@@ -400,6 +415,7 @@ export default function OrganizationsClient() {
         setCreditPeriod('30 Days')
         setPaymentTerms('Net 30')
         setRegisterStatus('active')
+        setInitialOutstanding('')
         setExistingOrganization(null)
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unable to add existing organization'
@@ -433,7 +449,8 @@ export default function OrganizationsClient() {
           gst,
           creditPeriod,
           paymentTerms,
-          status: registerStatus
+          status: registerStatus,
+          initialOutstanding: initialOutstanding ? Number(initialOutstanding) : 0
         })
       })
 
@@ -460,6 +477,7 @@ export default function OrganizationsClient() {
       setCreditPeriod('30 Days')
       setPaymentTerms('Net 30')
       setRegisterStatus('active')
+      setInitialOutstanding('')
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to create organization'
       if (message.toLowerCase().includes('unauthorized')) {
@@ -536,6 +554,95 @@ export default function OrganizationsClient() {
     setCreditPeriod('30 Days')
     setPaymentTerms('Net 30')
     setRegisterStatus('active')
+    setInitialOutstanding('')
+  }
+
+  const openEditModal = (org: Organization) => {
+    setEditingOrg(org)
+    setEditName(org.name)
+    setEditGst(org.gst === '-' ? '' : org.gst)
+    setEditCreditPeriod(org.creditPeriod)
+    setEditPaymentTerms(org.paymentTerms)
+    setEditStatus(org.status)
+    setEditOutstanding(org.initialOutstanding ? String(org.initialOutstanding) : '')
+    setEditError(null)
+    setEditSuccess(null)
+  }
+
+  const closeEditModal = () => {
+    if (isSavingEdit) return
+    setEditingOrg(null)
+    setEditError(null)
+    setEditSuccess(null)
+  }
+
+  const handleSaveEdit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!editingOrg) return
+
+    setEditError(null)
+    setEditSuccess(null)
+    setIsSavingEdit(true)
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/organizations/${editingOrg.id}`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeaders()
+        },
+        body: JSON.stringify({
+          name: editName.trim(),
+          gst: editGst || null,
+          creditPeriod: editCreditPeriod || null,
+          paymentTerms: editPaymentTerms || null,
+          status: editStatus,
+          initialOutstanding: editOutstanding ? Number(editOutstanding) : 0
+        })
+      })
+
+      const data = (await response.json()) as {
+        organization?: { id: string; name: string; gst: string | null; creditPeriod: string | null; paymentTerms: string | null; status: OrganizationStatus; initialOutstanding?: number }
+        error?: { message?: string }
+      }
+
+      if (!response.ok || !data.organization) {
+        throw new Error(data.error?.message ?? 'Unable to update organization')
+      }
+
+      setOrganizations((current) =>
+        current.map((o) => {
+          if (o.id !== editingOrg.id) return o
+          const newInitial = Number(data.organization?.initialOutstanding ?? 0)
+          const invoiceOutstanding = o.pendingPayment - o.initialOutstanding
+          return {
+            ...o,
+            name: data.organization?.name ?? o.name,
+            gst: data.organization?.gst ?? '-',
+            creditPeriod: data.organization?.creditPeriod ?? '30 Days',
+            paymentTerms: data.organization?.paymentTerms ?? 'Net 30',
+            status: data.organization?.status ?? o.status,
+            initialOutstanding: newInitial,
+            pendingPayment: newInitial + Math.max(0, invoiceOutstanding)
+          }
+        })
+      )
+
+      setEditSuccess('Organization updated successfully.')
+      setTimeout(() => closeEditModal(), 800)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to update organization'
+      if (message.toLowerCase().includes('unauthorized')) {
+        tokenStorage.clear()
+        router.replace('/hotel-finance/login')
+        return
+      }
+
+      setEditError(message)
+    } finally {
+      setIsSavingEdit(false)
+    }
   }
 
   return (
@@ -615,17 +722,18 @@ export default function OrganizationsClient() {
                       <th className="whitespace-nowrap px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Payment Terms</th>
                       <th className="whitespace-nowrap px-6 py-4 text-right text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Amount Received</th>
                       <th className="whitespace-nowrap px-6 py-4 text-right text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Outstanding</th>
-                      <th className="whitespace-nowrap px-6 py-4 text-center text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Actions</th>
+                      <th className="whitespace-nowrap px-6 py-4 text-center text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Contract</th>
+                      <th className="whitespace-nowrap px-6 py-4 text-center text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400"></th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
                     {isLoading ? (
                       <tr>
-                        <td colSpan={6} className="px-6 py-12 text-center text-sm text-slate-500 dark:text-slate-400">Loading organizations...</td>
+                        <td colSpan={7} className="px-6 py-12 text-center text-sm text-slate-500 dark:text-slate-400">Loading organizations...</td>
                       </tr>
                     ) : filteredOrganizations.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="px-6 py-12 text-center text-sm text-slate-500 dark:text-slate-400">No organizations found</td>
+                        <td colSpan={7} className="px-6 py-12 text-center text-sm text-slate-500 dark:text-slate-400">No organizations found</td>
                       </tr>
                     ) : filteredOrganizations.map((org) => (
                       <tr key={org.id} className="group cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
@@ -652,36 +760,41 @@ export default function OrganizationsClient() {
                         </td>
                         <td className="px-6 py-4">
                           <Link href={`/hotel-finance/organizations/${org.id}`} className="block">
-                            <span className="text-sm font-semibold text-green-600 dark:text-green-400 text-right block">₹{org.amountReceived.toLocaleString()}</span>
+                            <span className="text-sm font-semibold text-green-600 dark:text-green-400 text-right block">₹{org.amountReceived.toLocaleString('en-IN')}</span>
                           </Link>
                         </td>
                         <td className="px-6 py-4">
                           <Link href={`/hotel-finance/organizations/${org.id}`} className="block">
-                            <span className="text-sm font-semibold text-orange-600 dark:text-orange-400 text-right block">₹{org.pendingPayment.toLocaleString()}</span>
+                            <span className="text-sm font-semibold text-orange-600 dark:text-orange-400 text-right block">₹{org.pendingPayment.toLocaleString('en-IN')}</span>
                           </Link>
                         </td>
                         <td className="px-6 py-4">
                           <div className="flex items-center justify-center gap-2">
                             {org.contractStatus === 'signed' ? (
-                              <Link
-                                href={`/hotel-finance/organizations/${org.id}/contract`}
-                                className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors text-sm font-medium"
-                                title="View Contract"
-                              >
-                                <span className="material-symbols-outlined text-[18px]">visibility</span>
-                                <span>View Contract</span>
-                              </Link>
+                              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-600/20 dark:bg-emerald-900/20 dark:text-emerald-300 dark:ring-emerald-500/30">
+                                <span className="material-symbols-outlined text-[14px]">verified</span>
+                                Contract Signed
+                              </span>
                             ) : (
                               <Link
                                 href={`/hotel-finance/organizations/${org.id}/contract`}
-                                className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm font-medium"
-                                title="View Contract"
+                                className="inline-flex items-center gap-1 rounded-md bg-primary/10 px-2.5 py-1 text-[11px] font-semibold text-primary transition-colors hover:bg-primary hover:text-white dark:bg-primary/20 dark:text-blue-300 dark:hover:bg-primary dark:hover:text-white"
                               >
-                                <span className="material-symbols-outlined text-[18px]">visibility</span>
-                                <span>View Contract</span>
+                                <span className="material-symbols-outlined text-[14px]">add</span>
+                                Create Contract
                               </Link>
                             )}
                           </div>
+                        </td>
+                        <td className="px-4 py-4">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); openEditModal(org) }}
+                            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                            title="Edit organization"
+                          >
+                            <span className="material-symbols-outlined text-[14px]">edit</span>
+                            Edit
+                          </button>
                         </td>
                       </tr>
                     ))}
@@ -817,6 +930,20 @@ export default function OrganizationsClient() {
                         />
                       </div>
                     </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Outstanding Amount (₹)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={initialOutstanding}
+                        onChange={(event) => setInitialOutstanding(event.target.value)}
+                        disabled={Boolean(existingOrganization)}
+                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                        placeholder="0.00"
+                      />
+                      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Pre-existing outstanding balance carried forward from before onboarding.</p>
+                    </div>
 
                     {registerError && (
                       <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300">
@@ -867,6 +994,118 @@ export default function OrganizationsClient() {
                             ? 'Already Added'
                             : (isLinkingExisting ? 'Adding...' : 'Add Existing Organization')
                           : (isRegistering ? 'Creating...' : 'Create Organization')}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+
+            {editingOrg && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+                <div className="w-full max-w-lg rounded-xl border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-700 dark:bg-slate-900">
+                  <div className="mb-4 flex items-center justify-between">
+                    <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Edit Organization</h2>
+                    <button
+                      onClick={closeEditModal}
+                      className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                    >
+                      <span className="material-symbols-outlined">close</span>
+                    </button>
+                  </div>
+
+                  <form className="space-y-4" onSubmit={handleSaveEdit}>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Organization Name</label>
+                      <input
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        required
+                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                      />
+                    </div>
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">GST</label>
+                        <input
+                          value={editGst}
+                          onChange={(e) => setEditGst(e.target.value)}
+                          className="w-full rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                          placeholder="27AAAAA0000A1Z5"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Status</label>
+                        <select
+                          value={editStatus}
+                          onChange={(e) => setEditStatus(e.target.value as OrganizationStatus)}
+                          className="w-full rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                        >
+                          <option value="active">Active</option>
+                          <option value="on-hold">On Hold</option>
+                          <option value="inactive">Inactive</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Credit Period</label>
+                        <input
+                          value={editCreditPeriod}
+                          onChange={(e) => setEditCreditPeriod(e.target.value)}
+                          className="w-full rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                          placeholder="30 Days"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Payment Terms</label>
+                        <input
+                          value={editPaymentTerms}
+                          onChange={(e) => setEditPaymentTerms(e.target.value)}
+                          className="w-full rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                          placeholder="Net 30"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Outstanding Amount (₹)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={editOutstanding}
+                        onChange={(e) => setEditOutstanding(e.target.value)}
+                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                        placeholder="0.00"
+                      />
+                      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Initial outstanding balance. Invoice-based amounts are added automatically.</p>
+                    </div>
+
+                    {editError && (
+                      <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300">
+                        {editError}
+                      </div>
+                    )}
+                    {editSuccess && (
+                      <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300">
+                        {editSuccess}
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-end gap-3 pt-2">
+                      <button
+                        type="button"
+                        onClick={closeEditModal}
+                        className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={isSavingEdit}
+                        className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-blue-600 disabled:opacity-70"
+                      >
+                        {isSavingEdit ? 'Saving...' : 'Save Changes'}
                       </button>
                     </div>
                   </form>
