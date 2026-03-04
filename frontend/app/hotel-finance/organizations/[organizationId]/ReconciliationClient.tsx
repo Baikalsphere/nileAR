@@ -49,6 +49,7 @@ export default function ReconciliationClient({ organizationId }: { organizationI
   const [organization, setOrganization] = useState<OrganizationData | null>(null)
   const [items, setItems] = useState<ReconciliationItem[]>([])
   const [discrepancies, setDiscrepancies] = useState<Discrepancy[]>([])
+  const [initialOutstanding, setInitialOutstanding] = useState(0)
   const [organizationLoading, setOrganizationLoading] = useState(true)
   const [organizationError, setOrganizationError] = useState<string | null>(null)
   const [reconciliationError, setReconciliationError] = useState<string | null>(null)
@@ -98,6 +99,7 @@ export default function ReconciliationClient({ organizationId }: { organizationI
         const reconciliationData = await reconciliationResponse.json()
         setItems((reconciliationData?.reconciliation?.items ?? []) as ReconciliationItem[])
         setDiscrepancies((reconciliationData?.reconciliation?.discrepancies ?? []) as Discrepancy[])
+        setInitialOutstanding(Number(reconciliationData?.reconciliation?.initialOutstanding ?? 0))
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to fetch reconciliation details'
         if (message.toLowerCase().includes('organization')) {
@@ -119,7 +121,7 @@ export default function ReconciliationClient({ organizationId }: { organizationI
   const totalInvoices = invoices.reduce((sum, item) => sum + item.amount, 0)
   const totalPayments = payments.reduce((sum, item) => sum + item.amount, 0)
   
-  const unmatchedAmount = totalInvoices - totalPayments
+  const unmatchedAmount = initialOutstanding + totalInvoices - totalPayments
   const matchedCount = items.filter(item => item.status === 'matched').length
   const unmatchedCount = items.filter(item => item.status === 'unmatched').length
   const partialCount = items.filter(item => item.status === 'partial').length
@@ -250,6 +252,21 @@ export default function ReconciliationClient({ organizationId }: { organizationI
                 </div>
               </div>
             </div>
+
+            {/* Initial Outstanding */}
+            {initialOutstanding > 0 && (
+              <div className="rounded-lg border border-orange-200 bg-orange-50 px-4 py-3 dark:border-orange-900/30 dark:bg-orange-900/10">
+                <div className="flex items-center gap-3">
+                  <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300">
+                    <span className="material-symbols-outlined">account_balance</span>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold uppercase text-orange-700 dark:text-orange-300">Opening Outstanding Balance</p>
+                    <p className="text-lg font-bold text-orange-700 dark:text-orange-300">₹{initialOutstanding.toLocaleString()}</p>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Key Metrics Summary */}
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">

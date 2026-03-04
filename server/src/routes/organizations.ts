@@ -1175,8 +1175,9 @@ router.get("/:organizationId/reconciliation", async (req: Request, res: Response
     const organizationId = req.params.organizationId;
 
     const accessResult = await query(
-      `SELECT 1
+      `SELECT o.initial_outstanding
        FROM hotel_organizations ho
+       JOIN organizations o ON o.id = ho.organization_id
        WHERE ho.organization_id = $1
          AND ho.hotel_user_id = $2
        LIMIT 1`,
@@ -1186,6 +1187,8 @@ router.get("/:organizationId/reconciliation", async (req: Request, res: Response
     if (accessResult.rowCount === 0) {
       return res.status(404).json({ error: { message: "Organization not found" } });
     }
+
+    const initialOutstanding = Number(accessResult.rows[0].initial_outstanding ?? 0);
 
     const invoicesResult = await query(
       `SELECT i.id,
@@ -1288,7 +1291,8 @@ router.get("/:organizationId/reconciliation", async (req: Request, res: Response
     return res.status(200).json({
       reconciliation: {
         items,
-        discrepancies
+        discrepancies,
+        initialOutstanding
       }
     });
   } catch (error) {
@@ -1773,7 +1777,10 @@ router.post("/", async (req: Request, res: Response, next: NextFunction) => {
             gst: organization.gst,
             creditPeriod: organization.credit_period,
             paymentTerms: organization.payment_terms,
-            status: organization.status
+            status: organization.status,
+            amountReceived: 0,
+            outstandingAmount: Number(organization.initial_outstanding ?? 0),
+            initialOutstanding: Number(organization.initial_outstanding ?? 0)
           },
           credentials: {
             userId: organization.corporate_user_id,
