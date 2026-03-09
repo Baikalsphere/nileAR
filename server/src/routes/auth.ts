@@ -11,6 +11,19 @@ import { z } from "zod";
 import { config } from "../config.js";
 import { pool, query } from "../db.js";
 import { authLimiter } from "../middleware/rateLimiters.js";
+
+// Baikalsphere centralized auth token payload
+interface BaikalsphereTokenPayload {
+  sub: string;
+  email: string;
+  orgId: string | null;
+  platformRole: string;
+  modules: string[];
+  iat: number;
+  exp: number;
+  iss: string;
+  aud: string;
+}
 import {
   createBillSignedUrl,
   deleteBillFromSupabase,
@@ -27,6 +40,30 @@ const router = Router();
 
 const DUMMY_PASSWORD_HASH = "$2b$10$N9qo8uLOickgx2ZMRZo5i.ejFrP8T6F8mT7V0pX0rW2fMQ0m6qK2y";
 let ensureBookingRequestsTablePromise: Promise<void> | null = null;
+
+// Provision a user in Baikalsphere (for sub-user SSO)
+const provisionBaikalsphereUser = async (email: string, fullName: string, passwordHash: string): Promise<string | null> => {
+  if (!config.baikalsphereAuthUrl || !config.baikalsphereInternalSecret) return null;
+  try {
+    const resp = await fetch(`${config.baikalsphereAuthUrl}/api/internal/provision-user`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Internal-Secret": config.baikalsphereInternalSecret,
+      },
+      body: JSON.stringify({ email, fullName, passwordHash, moduleIds: ["ar"] }),
+    });
+    if (!resp.ok) {
+      console.error("[baikalsphere] Provision failed:", resp.status, await resp.text());
+      return null;
+    }
+    const data = await resp.json() as { userId: string };
+    return data.userId;
+  } catch (err: any) {
+    console.error("[baikalsphere] Provision error:", err?.message);
+    return null;
+  }
+};
 
 const registerSchema = z.object({
   email: z.string().email().max(320),
@@ -328,6 +365,8 @@ interface CorporateAccessTokenPayload {
   isSubUser?: boolean;
   portalUserId?: string;
   allowedPages?: string[];
+  bsEmail?: string;
+  bsUserId?: string;
   iat: number;
   exp: number;
   iss: string;
@@ -341,13 +380,15 @@ interface HotelAccessTokenPayload {
   isSubUser?: boolean;
   parentId?: string;
   allowedPages?: string[];
+  bsEmail?: string;
+  bsUserId?: string;
   iat: number;
   exp: number;
   iss: string;
   aud: string;
 }
 
-const getCorporatePayload = (req: Request, res: Response): CorporateAccessTokenPayload | null => {
+const getCorporatePayload = async (req: Request, res: Response): Promise<CorporateAccessTokenPayload | null> => {
   const header = req.headers.authorization;
   const queryToken = typeof req.query.token === "string" ? req.query.token : null;
   const token = header && header.startsWith("Bearer ")
@@ -373,12 +414,82 @@ const getCorporatePayload = (req: Request, res: Response): CorporateAccessTokenP
 
     return payload;
   } catch {
-    res.status(401).json({ error: { message: "Unauthorized" } });
-    return null;
+    // Not a legacy corporate token ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â try Baikalsphere SSO
   }
+
+  // Try Baikalsphere centralized auth token
+  if (config.baikalsphereJwtSecret) {
+    try {
+      const bsPayload = jwt.verify(token, config.baikalsphereJwtSecret, {
+        issuer: "baikalsphere-auth",
+        audience: "baikalsphere",
+      }) as BaikalsphereTokenPayload;
+
+      if (!bsPayload.modules || !bsPayload.modules.includes("ar")) {
+        res.status(403).json({ error: { message: "No access to AR module" } });
+        return null;
+      }
+
+      // Look up the Baikalsphere user ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ AR organization mapping
+      const orgResult = await query(
+        `SELECT id, corporate_user_id FROM organizations WHERE baikalsphere_user_id = $1`,
+        [bsPayload.sub]
+      );
+
+      if (orgResult.rowCount! > 0) {
+        const org = orgResult.rows[0];
+        return {
+          sub: org.id,
+          role: "corporate_portal_user",
+          scope: "corporate-portal",
+          corporateUserId: org.corporate_user_id,
+          bsEmail: bsPayload.email,
+          bsUserId: bsPayload.sub,
+          iat: bsPayload.iat,
+          exp: bsPayload.exp,
+          iss: bsPayload.iss,
+          aud: bsPayload.aud,
+        };
+      }
+
+      // Check if this Baikalsphere user is a corporate sub-user
+      const corpPortalUser = await query(
+        `SELECT id, parent_id, role, allowed_pages FROM portal_users
+         WHERE baikalsphere_user_id = $1 AND portal_type = 'corporate'`,
+        [bsPayload.sub]
+      );
+
+      if (corpPortalUser.rowCount! > 0) {
+        const pu = corpPortalUser.rows[0];
+        return {
+          sub: pu.parent_id,
+          role: pu.role,
+          scope: "corporate-portal",
+          corporateUserId: pu.parent_id,
+          isSubUser: true,
+          portalUserId: pu.id,
+          allowedPages: pu.allowed_pages || [],
+          bsEmail: bsPayload.email,
+          bsUserId: bsPayload.sub,
+          iat: bsPayload.iat,
+          exp: bsPayload.exp,
+          iss: bsPayload.iss,
+          aud: bsPayload.aud,
+        };
+      }
+
+      res.status(403).json({ error: { message: "No corporate organization linked to this account" } });
+      return null;
+    } catch {
+      // Not a valid Baikalsphere token either
+    }
+  }
+
+  res.status(401).json({ error: { message: "Unauthorized" } });
+  return null;
 };
 
-const getHotelPayload = (req: Request, res: Response): HotelAccessTokenPayload | null => {
+const getHotelPayload = async (req: Request, res: Response): Promise<HotelAccessTokenPayload | null> => {
   const header = req.headers.authorization;
   const token = header && header.startsWith("Bearer ")
     ? header.slice("Bearer ".length).trim()
@@ -387,6 +498,81 @@ const getHotelPayload = (req: Request, res: Response): HotelAccessTokenPayload |
   if (!token) {
     res.status(401).json({ error: { message: "Unauthorized" } });
     return null;
+  }
+
+  // Try Baikalsphere centralized auth token first
+  if (config.baikalsphereJwtSecret) {
+    try {
+      const bsPayload = jwt.verify(token, config.baikalsphereJwtSecret, {
+        issuer: "baikalsphere-auth",
+        audience: "baikalsphere",
+      }) as BaikalsphereTokenPayload;
+
+      if (!bsPayload.modules || !bsPayload.modules.includes("ar")) {
+        res.status(403).json({ error: { message: "No access to AR module" } });
+        return null;
+      }
+
+      // Resolve Baikalsphere UUID â†’ AR user ID via mapping
+      const mappedUser = await query(
+        `SELECT id FROM users WHERE baikalsphere_user_id = $1`,
+        [bsPayload.sub]
+      );
+
+      if (mappedUser.rowCount! > 0) {
+        return {
+          sub: mappedUser.rows[0].id,
+          role: bsPayload.platformRole === "superadmin" ? "admin" : "hotel_finance_user",
+          scope: "hotel-finance",
+          bsEmail: bsPayload.email,
+          bsUserId: bsPayload.sub,
+          iat: bsPayload.iat,
+          exp: bsPayload.exp,
+          iss: bsPayload.iss,
+          aud: bsPayload.aud,
+        };
+      }
+
+      // Check if this Baikalsphere user is a hotel sub-user
+      const portalUser = await query(
+        `SELECT id, parent_id, role, allowed_pages FROM portal_users
+         WHERE baikalsphere_user_id = $1 AND portal_type = 'hotel_finance'`,
+        [bsPayload.sub]
+      );
+
+      if (portalUser.rowCount! > 0) {
+        const pu = portalUser.rows[0];
+        return {
+          sub: pu.parent_id,
+          role: pu.role,
+          scope: "hotel-finance",
+          isSubUser: true,
+          parentId: pu.parent_id,
+          allowedPages: pu.allowed_pages || [],
+          bsEmail: bsPayload.email,
+          bsUserId: bsPayload.sub,
+          iat: bsPayload.iat,
+          exp: bsPayload.exp,
+          iss: bsPayload.iss,
+          aud: bsPayload.aud,
+        };
+      }
+
+      // Fallback: use Baikalsphere UUID directly (for auto-provisioning)
+      return {
+        sub: bsPayload.sub,
+        role: bsPayload.platformRole === "superadmin" ? "admin" : "hotel_finance_user",
+        scope: "hotel-finance",
+        bsEmail: bsPayload.email,
+        bsUserId: bsPayload.sub,
+        iat: bsPayload.iat,
+        exp: bsPayload.exp,
+        iss: bsPayload.iss,
+        aud: bsPayload.aud,
+      };
+    } catch {
+      // Not a Baikalsphere token, try legacy
+    }
   }
 
   try {
@@ -991,9 +1177,69 @@ router.get("/hotel/logo/:hotelUserId/file", async (req, res, next) => {
   }
 });
 
+router.get("/resolve-portal", async (req, res, next) => {
+  try {
+    const header = req.headers.authorization;
+    const token = header && header.startsWith("Bearer ")
+      ? header.slice("Bearer ".length).trim()
+      : null;
+
+    if (!token || !config.baikalsphereJwtSecret) {
+      return res.status(401).json({ error: { message: "Unauthorized" } });
+    }
+
+    let bsPayload: BaikalsphereTokenPayload;
+    try {
+      bsPayload = jwt.verify(token, config.baikalsphereJwtSecret, {
+        issuer: "baikalsphere-auth",
+        audience: "baikalsphere",
+      }) as BaikalsphereTokenPayload;
+    } catch {
+      return res.status(401).json({ error: { message: "Invalid token" } });
+    }
+
+    if (!bsPayload.modules || !bsPayload.modules.includes("ar")) {
+      return res.status(403).json({ error: { message: "No access to AR module" } });
+    }
+
+    // Check organizations FIRST (org users take priority over auto-provisioned hotel accounts)
+    const orgResult = await query(
+      `SELECT id FROM organizations WHERE baikalsphere_user_id = $1`,
+      [bsPayload.sub]
+    );
+    if (orgResult.rowCount! > 0) {
+      return res.json({ portal: "corporate-portal" });
+    }
+
+    // Then check hotel users
+    const hotelResult = await query(
+      `SELECT id FROM users WHERE baikalsphere_user_id = $1`,
+      [bsPayload.sub]
+    );
+    if (hotelResult.rowCount! > 0) {
+      return res.json({ portal: "hotel-finance" });
+    }
+
+    // Check portal_users (sub-users provisioned into Baikalsphere)
+    const portalUserResult = await query(
+      `SELECT id, portal_type FROM portal_users WHERE baikalsphere_user_id = $1`,
+      [bsPayload.sub]
+    );
+    if (portalUserResult.rowCount! > 0) {
+      const pu = portalUserResult.rows[0];
+      return res.json({ portal: pu.portal_type === "corporate" ? "corporate-portal" : "hotel-finance" });
+    }
+
+    // New user — default to hotel-finance (auto-provisioned on /hotel/me)
+    return res.json({ portal: "hotel-finance" });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.get("/hotel/me", async (req, res, next) => {
   try {
-    const payload = getHotelPayload(req, res);
+    const payload = await getHotelPayload(req, res);
     if (!payload) {
       return;
     }
@@ -1010,6 +1256,63 @@ router.get("/hotel/me", async (req, res, next) => {
     );
 
     if (result.rowCount === 0) {
+      // Auto-provision: Baikalsphere user has AR module but no AR account yet
+      if (payload.bsEmail && payload.bsUserId) {
+        // Don't auto-provision hotel accounts for organization users
+        const isOrgUser = await query(
+          `SELECT id FROM organizations WHERE baikalsphere_user_id = $1`,
+          [payload.bsUserId]
+        );
+        if (isOrgUser.rowCount! > 0) {
+          return res.status(403).json({ error: { message: "This account belongs to a corporate organization. Use the corporate portal." } });
+        }
+
+        const newUser = await query(
+          `INSERT INTO users (email, password_hash, role, baikalsphere_user_id)
+           VALUES ($1, $2, 'hotel_finance_user', $3)
+           ON CONFLICT (email) DO UPDATE SET baikalsphere_user_id = EXCLUDED.baikalsphere_user_id
+           RETURNING id, email, role`,
+          [payload.bsEmail, DUMMY_PASSWORD_HASH, payload.bsUserId]
+        );
+        const userId = newUser.rows[0].id;
+
+        await query(
+          `INSERT INTO hotel_profiles (user_id, hotel_name, contact_email)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (user_id) DO NOTHING`,
+          [userId, `${payload.bsEmail.split("@")[0]}'s Hotel`, payload.bsEmail]
+        );
+
+        // Update payload.sub so downstream code uses the new AR user ID
+        payload.sub = userId;
+
+        const reprofile = await query(
+          `SELECT u.id, u.email, u.role,
+                  hp.hotel_name, hp.entity_name, hp.gst, hp.location, hp.logo_url,
+                  hp.contact_email, hp.contact_phone, hp.address
+           FROM users u
+           LEFT JOIN hotel_profiles hp ON hp.user_id = u.id
+           WHERE u.id = $1
+           LIMIT 1`,
+          [userId]
+        );
+
+        const r = reprofile.rows[0];
+        return res.status(200).json({
+          user: { id: r.id, email: r.email, role: "admin", isSubUser: false, allowedPages: [] },
+          profile: {
+            hotelName: r.hotel_name,
+            entityName: r.entity_name,
+            gst: r.gst,
+            location: r.location,
+            logoUrl: resolveHotelLogoUrl(r.id, r.logo_url),
+            contactEmail: r.contact_email,
+            contactPhone: r.contact_phone,
+            address: r.address
+          }
+        });
+      }
+
       return res.status(401).json({ error: { message: "Unauthorized" } });
     }
 
@@ -1017,26 +1320,31 @@ router.get("/hotel/me", async (req, res, next) => {
 
     // If sub-user, add sub-user info
     if (payload.isSubUser && payload.parentId) {
-      const puResult = await query(
-        `SELECT id, full_name, email, role, allowed_pages FROM portal_users WHERE parent_id = $1 AND portal_type = 'hotel_finance' AND id = (
-          SELECT id FROM portal_users WHERE parent_id = $1 AND email = (
-            SELECT email FROM portal_users WHERE parent_id = $1 LIMIT 1
-          ) LIMIT 1
-        )`,
-        [payload.parentId]
-      );
+      let matchedUser: any = null;
 
-      // Find the portal user by checking the token's allowedPages
-      const puResult2 = await query(
-        `SELECT id, full_name, email, role, allowed_pages FROM portal_users
-         WHERE parent_id = $1 AND portal_type = 'hotel_finance'`,
-        [payload.sub]
-      );
+      // For Baikalsphere SSO sub-users, match by baikalsphere_user_id
+      if (payload.bsUserId) {
+        const bsMatch = await query(
+          `SELECT id, full_name, email, role, allowed_pages FROM portal_users
+           WHERE baikalsphere_user_id = $1 AND portal_type = 'hotel_finance'`,
+          [payload.bsUserId]
+        );
+        if (bsMatch.rowCount! > 0) {
+          matchedUser = bsMatch.rows[0];
+        }
+      }
 
-      // Match by allowed pages from token
-      const matchedUser = puResult2.rows.find((pu: any) =>
-        JSON.stringify(pu.allowed_pages) === JSON.stringify(payload.allowedPages)
-      ) || puResult2.rows[0];
+      // Fallback for legacy tokens: match by parent + allowed_pages
+      if (!matchedUser) {
+        const puResult2 = await query(
+          `SELECT id, full_name, email, role, allowed_pages FROM portal_users
+           WHERE parent_id = $1 AND portal_type = 'hotel_finance'`,
+          [payload.sub]
+        );
+        matchedUser = puResult2.rows.find((pu: any) =>
+          JSON.stringify(pu.allowed_pages) === JSON.stringify(payload.allowedPages)
+        ) || puResult2.rows[0];
+      }
 
       return res.status(200).json({
         user: {
@@ -1087,7 +1395,7 @@ router.get("/hotel/me", async (req, res, next) => {
 
 router.post("/hotel/profile/logo", hotelLogoUpload.single("file"), async (req, res, next) => {
   try {
-    const payload = getHotelPayload(req, res);
+    const payload = await getHotelPayload(req, res);
     if (!payload) {
       return;
     }
@@ -1183,7 +1491,7 @@ router.post("/hotel/profile/logo", hotelLogoUpload.single("file"), async (req, r
 
 router.put("/hotel/profile", async (req, res, next) => {
   try {
-    const payload = getHotelPayload(req, res);
+    const payload = await getHotelPayload(req, res);
     if (!payload) {
       return;
     }
@@ -1264,7 +1572,7 @@ router.put("/hotel/profile", async (req, res, next) => {
 
 router.post("/hotel/change-password", async (req, res, next) => {
   try {
-    const payload = getHotelPayload(req, res);
+    const payload = await getHotelPayload(req, res);
     if (!payload) {
       return;
     }
@@ -1436,7 +1744,7 @@ router.post("/corporate/login", authLimiter, async (req, res, next) => {
 
 router.get("/corporate/me", async (req, res, next) => {
   try {
-    const payload = getCorporatePayload(req, res);
+    const payload = await getCorporatePayload(req, res);
     if (!payload) {
       return;
     }
@@ -1460,11 +1768,28 @@ router.get("/corporate/me", async (req, res, next) => {
 
     // If sub-user, get their info
     if (payload.isSubUser && payload.portalUserId) {
-      const puResult = await query(
-        `SELECT id, full_name, email, role, allowed_pages FROM portal_users WHERE id = $1`,
-        [payload.portalUserId]
-      );
-      const portalUser = puResult.rows[0];
+      let portalUser: any = null;
+
+      // For Baikalsphere SSO sub-users, match by baikalsphere_user_id
+      if (payload.bsUserId) {
+        const bsMatch = await query(
+          `SELECT id, full_name, email, role, allowed_pages FROM portal_users
+           WHERE baikalsphere_user_id = $1 AND portal_type = 'corporate'`,
+          [payload.bsUserId]
+        );
+        if (bsMatch.rowCount! > 0) {
+          portalUser = bsMatch.rows[0];
+        }
+      }
+
+      // Fallback for legacy tokens: match by portalUserId
+      if (!portalUser) {
+        const puResult = await query(
+          `SELECT id, full_name, email, role, allowed_pages FROM portal_users WHERE id = $1`,
+          [payload.portalUserId]
+        );
+        portalUser = puResult.rows[0];
+      }
 
       return res.status(200).json({
         user: {
@@ -1513,7 +1838,7 @@ router.get("/corporate/me", async (req, res, next) => {
 
 router.put("/corporate/profile", async (req, res, next) => {
   try {
-    const payload = getCorporatePayload(req, res);
+    const payload = await getCorporatePayload(req, res);
     if (!payload) {
       return;
     }
@@ -1573,7 +1898,7 @@ router.put("/corporate/profile", async (req, res, next) => {
 
 router.get("/corporate/employees", async (req, res, next) => {
   try {
-    const payload = getCorporatePayload(req, res);
+    const payload = await getCorporatePayload(req, res);
     if (!payload) {
       return;
     }
@@ -1619,7 +1944,7 @@ router.get("/corporate/employees", async (req, res, next) => {
 
 router.post("/corporate/employees", async (req, res, next) => {
   try {
-    const payload = getCorporatePayload(req, res);
+    const payload = await getCorporatePayload(req, res);
     if (!payload) {
       return;
     }
@@ -1687,7 +2012,7 @@ router.post("/corporate/employees", async (req, res, next) => {
 
 router.put("/corporate/employees/:employeeId", async (req, res, next) => {
   try {
-    const payload = getCorporatePayload(req, res);
+    const payload = await getCorporatePayload(req, res);
     if (!payload) {
       return;
     }
@@ -1759,7 +2084,7 @@ router.put("/corporate/employees/:employeeId", async (req, res, next) => {
 
 router.get("/corporate/hotels/:hotelId/booking-request-meta", async (req, res, next) => {
   try {
-    const payload = getCorporatePayload(req, res);
+    const payload = await getCorporatePayload(req, res);
     if (!payload) {
       return;
     }
@@ -1847,7 +2172,7 @@ router.get("/corporate/hotels/:hotelId/booking-request-meta", async (req, res, n
 
 router.get("/corporate/hotels/:hotelId/contracts/latest", async (req, res, next) => {
   try {
-    const payload = getCorporatePayload(req, res);
+    const payload = await getCorporatePayload(req, res);
     if (!payload) {
       return;
     }
@@ -1909,7 +2234,7 @@ router.get("/corporate/hotels/:hotelId/contracts/latest", async (req, res, next)
 
 router.get("/corporate/hotels/:hotelId/contracts/signed-history", async (req, res, next) => {
   try {
-    const payload = getCorporatePayload(req, res);
+    const payload = await getCorporatePayload(req, res);
     if (!payload) {
       return;
     }
@@ -1968,7 +2293,7 @@ router.get("/corporate/hotels/:hotelId/contracts/signed-history", async (req, re
 
 router.get("/corporate/hotels/:hotelId/contracts/:contractId/pdf", async (req, res, next) => {
   try {
-    const payload = getCorporatePayload(req, res);
+    const payload = await getCorporatePayload(req, res);
     if (!payload) {
       return;
     }
@@ -2023,7 +2348,7 @@ router.get("/corporate/hotels/:hotelId/contracts/:contractId/pdf", async (req, r
 
 router.post("/corporate/booking-requests", async (req, res, next) => {
   try {
-    const payload = getCorporatePayload(req, res);
+    const payload = await getCorporatePayload(req, res);
     if (!payload) {
       return;
     }
@@ -2174,7 +2499,7 @@ router.post("/corporate/booking-requests", async (req, res, next) => {
 
 router.get("/corporate/booking-requests", async (req, res, next) => {
   try {
-    const payload = getCorporatePayload(req, res);
+    const payload = await getCorporatePayload(req, res);
     if (!payload) {
       return;
     }
@@ -2242,7 +2567,7 @@ router.get("/corporate/booking-requests", async (req, res, next) => {
 
 router.get("/corporate/hotels", async (req, res, next) => {
   try {
-    const payload = getCorporatePayload(req, res);
+    const payload = await getCorporatePayload(req, res);
     if (!payload) {
       return;
     }
@@ -2295,7 +2620,7 @@ router.get("/corporate/hotels", async (req, res, next) => {
 
 router.get("/corporate/invoices", async (req, res, next) => {
   try {
-    const payload = getCorporatePayload(req, res);
+    const payload = await getCorporatePayload(req, res);
     if (!payload) {
       return;
     }
@@ -2346,7 +2671,7 @@ router.get("/corporate/invoices", async (req, res, next) => {
 
 router.get("/corporate/invoices/:invoiceId", async (req, res, next) => {
   try {
-    const payload = getCorporatePayload(req, res);
+    const payload = await getCorporatePayload(req, res);
     if (!payload) {
       return;
     }
@@ -2432,7 +2757,7 @@ router.get("/corporate/invoices/:invoiceId", async (req, res, next) => {
 
 router.get("/corporate/bills/:billId/file", async (req, res, next) => {
   try {
-    const payload = getCorporatePayload(req, res);
+    const payload = await getCorporatePayload(req, res);
     if (!payload) {
       return;
     }
@@ -2506,7 +2831,7 @@ router.get("/corporate/bills/:billId/file", async (req, res, next) => {
 
 router.get("/corporate/employee-stays", async (req, res, next) => {
   try {
-    const payload = getCorporatePayload(req, res);
+    const payload = await getCorporatePayload(req, res);
     if (!payload) {
       return;
     }
@@ -2551,7 +2876,7 @@ router.get("/corporate/employee-stays", async (req, res, next) => {
 
 router.post("/corporate/set-password", async (req, res, next) => {
   try {
-    const payload = getCorporatePayload(req, res);
+    const payload = await getCorporatePayload(req, res);
     if (!payload) {
       return;
     }
@@ -2581,13 +2906,13 @@ router.post("/corporate/set-password", async (req, res, next) => {
   }
 });
 
-// ══════════════════════════════════════════════════════════════
+// ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
 // Portal User Management (Hotel Finance)
-// ══════════════════════════════════════════════════════════════
+// ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
 
 router.get("/hotel/users", async (req, res, next) => {
   try {
-    const payload = getHotelPayload(req, res);
+    const payload = await getHotelPayload(req, res);
     if (!payload) return;
 
     // Only admin can list users
@@ -2611,7 +2936,7 @@ router.get("/hotel/users", async (req, res, next) => {
 
 router.post("/hotel/users", async (req, res, next) => {
   try {
-    const payload = getHotelPayload(req, res);
+    const payload = await getHotelPayload(req, res);
     if (!payload) return;
 
     if (payload.isSubUser) {
@@ -2636,6 +2961,15 @@ router.post("/hotel/users", async (req, res, next) => {
        RETURNING id, full_name, email, role, allowed_pages, is_active, created_at, updated_at`,
       [payload.sub, form.fullName.trim(), normalizedEmail, passwordHash, form.role, form.allowedPages]
     );
+
+    // Provision in Baikalsphere for SSO
+    const bsUserId = await provisionBaikalsphereUser(normalizedEmail, form.fullName.trim(), passwordHash);
+    if (bsUserId) {
+      await query(
+        `UPDATE portal_users SET baikalsphere_user_id = $1 WHERE id = $2`,
+        [bsUserId, result.rows[0].id]
+      );
+    }
 
     // Send credentials email
     try {
@@ -2662,7 +2996,7 @@ router.post("/hotel/users", async (req, res, next) => {
 
 router.put("/hotel/users/:userId", async (req, res, next) => {
   try {
-    const payload = getHotelPayload(req, res);
+    const payload = await getHotelPayload(req, res);
     if (!payload) return;
 
     if (payload.isSubUser) {
@@ -2721,7 +3055,7 @@ router.put("/hotel/users/:userId", async (req, res, next) => {
 
 router.delete("/hotel/users/:userId", async (req, res, next) => {
   try {
-    const payload = getHotelPayload(req, res);
+    const payload = await getHotelPayload(req, res);
     if (!payload) return;
 
     if (payload.isSubUser) {
@@ -2747,7 +3081,7 @@ router.delete("/hotel/users/:userId", async (req, res, next) => {
 // Change password for hotel finance sub-user
 router.post("/hotel/user/change-password", async (req, res, next) => {
   try {
-    const payload = getHotelPayload(req, res);
+    const payload = await getHotelPayload(req, res);
     if (!payload) return;
 
     const { currentPassword, newPassword } = portalUserChangePasswordSchema.parse(req.body);
@@ -2778,7 +3112,7 @@ router.post("/hotel/user/change-password", async (req, res, next) => {
       return res.status(200).json({ ok: true });
     }
 
-    // Sub-user – find by parent_id + allowedPages match
+    // Sub-user ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ find by parent_id + allowedPages match
     const puResult = await query(
       `SELECT id, password_hash FROM portal_users
        WHERE parent_id = $1 AND portal_type = 'hotel_finance'`,
@@ -2811,13 +3145,13 @@ router.post("/hotel/user/change-password", async (req, res, next) => {
   }
 });
 
-// ══════════════════════════════════════════════════════════════
+// ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
 // Portal User Management (Corporate)
-// ══════════════════════════════════════════════════════════════
+// ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
 
 router.get("/corporate/users", async (req, res, next) => {
   try {
-    const payload = getCorporatePayload(req, res);
+    const payload = await getCorporatePayload(req, res);
     if (!payload) return;
 
     // Both admin and sub-users can view the users list
@@ -2850,7 +3184,7 @@ router.get("/corporate/users", async (req, res, next) => {
 
 router.post("/corporate/users", async (req, res, next) => {
   try {
-    const payload = getCorporatePayload(req, res);
+    const payload = await getCorporatePayload(req, res);
     if (!payload) return;
 
     if (payload.isSubUser) {
@@ -2875,6 +3209,15 @@ router.post("/corporate/users", async (req, res, next) => {
        RETURNING id, full_name, email, role, allowed_pages, is_active, created_at, updated_at`,
       [payload.sub, form.fullName.trim(), normalizedEmail, passwordHash, form.role, form.allowedPages]
     );
+
+    // Provision in Baikalsphere for SSO
+    const bsUserId = await provisionBaikalsphereUser(normalizedEmail, form.fullName.trim(), passwordHash);
+    if (bsUserId) {
+      await query(
+        `UPDATE portal_users SET baikalsphere_user_id = $1 WHERE id = $2`,
+        [bsUserId, result.rows[0].id]
+      );
+    }
 
     // Send credentials email
     try {
@@ -2901,7 +3244,7 @@ router.post("/corporate/users", async (req, res, next) => {
 
 router.put("/corporate/users/:userId", async (req, res, next) => {
   try {
-    const payload = getCorporatePayload(req, res);
+    const payload = await getCorporatePayload(req, res);
     if (!payload) return;
 
     if (payload.isSubUser) {
@@ -2960,7 +3303,7 @@ router.put("/corporate/users/:userId", async (req, res, next) => {
 
 router.delete("/corporate/users/:userId", async (req, res, next) => {
   try {
-    const payload = getCorporatePayload(req, res);
+    const payload = await getCorporatePayload(req, res);
     if (!payload) return;
 
     if (payload.isSubUser) {
@@ -2986,7 +3329,7 @@ router.delete("/corporate/users/:userId", async (req, res, next) => {
 // Change password for corporate portal users (admin or sub-user)
 router.post("/corporate/user/change-password", async (req, res, next) => {
   try {
-    const payload = getCorporatePayload(req, res);
+    const payload = await getCorporatePayload(req, res);
     if (!payload) return;
 
     const { currentPassword, newPassword } = portalUserChangePasswordSchema.parse(req.body);

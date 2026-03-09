@@ -30,7 +30,10 @@ const envSchema = z.object({
   CLOUDINARY_FOLDER: z.string().default("hotel-finance/bills"),
   SUPABASE_URL: z.string().url().optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
-  SUPABASE_STORAGE_BUCKET: z.string().min(1).default("booking-bills")
+  SUPABASE_STORAGE_BUCKET: z.string().min(1).default("booking-bills"),
+  BAIKALSPHERE_JWT_SECRET: z.string().min(32).optional(),
+  BAIKALSPHERE_AUTH_URL: z.string().url().optional(),
+  BAIKALSPHERE_INTERNAL_SECRET: z.string().min(16).optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -113,5 +116,8 @@ export const config = {
   supabaseStorageBucket: env.SUPABASE_STORAGE_BUCKET,
   supabaseStorageEnabled: Boolean(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY),
   mailEnabled: Boolean(mailProvider),
-  isProd: env.NODE_ENV === "production"
+  isProd: env.NODE_ENV === "production",
+  baikalsphereJwtSecret: env.BAIKALSPHERE_JWT_SECRET,
+  baikalsphereAuthUrl: env.BAIKALSPHERE_AUTH_URL,
+  baikalsphereInternalSecret: env.BAIKALSPHERE_INTERNAL_SECRET
 };

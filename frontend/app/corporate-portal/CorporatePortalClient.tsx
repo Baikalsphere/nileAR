@@ -38,6 +38,16 @@ export default function CorporatePortalClient() {
   const [failedLogoHotelIds, setFailedLogoHotelIds] = useState<Set<string>>(new Set())
 
   useEffect(() => {
+    // Handle SSO token passed from Baikalsphere dashboard
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search)
+      const ssoToken = params.get('token')
+      if (ssoToken) {
+        corporateTokenStorage.set(ssoToken)
+        window.history.replaceState({}, '', window.location.pathname)
+      }
+    }
+
     const token = corporateTokenStorage.get()
     if (!token) {
       router.replace('/corporate-portal/login')

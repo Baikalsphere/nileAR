@@ -412,6 +412,10 @@ CREATE INDEX IF NOT EXISTS portal_users_parent_id_idx ON portal_users(parent_id)
 CREATE INDEX IF NOT EXISTS portal_users_portal_type_idx ON portal_users(portal_type);
 CREATE INDEX IF NOT EXISTS portal_users_email_idx ON portal_users(email);
 
+ALTER TABLE portal_users
+  ADD COLUMN IF NOT EXISTS baikalsphere_user_id uuid;
+CREATE INDEX IF NOT EXISTS portal_users_baikalsphere_user_id_idx ON portal_users(baikalsphere_user_id);
+
 DROP TRIGGER IF EXISTS portal_users_set_updated_at ON portal_users;
 CREATE TRIGGER portal_users_set_updated_at
   BEFORE UPDATE ON portal_users

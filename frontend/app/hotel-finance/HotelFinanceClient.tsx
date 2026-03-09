@@ -17,6 +17,17 @@ export default function HotelFinanceClient() {
   const [isHotelLogoFailed, setIsHotelLogoFailed] = useState(false)
 
   useEffect(() => {
+    // Handle SSO token passed from Baikalsphere dashboard
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search)
+      const ssoToken = params.get('token')
+      if (ssoToken) {
+        tokenStorage.set(ssoToken)
+        // Clean URL
+        window.history.replaceState({}, '', window.location.pathname)
+      }
+    }
+
     const token = tokenStorage.get()
     if (!token) {
       router.replace('/hotel-finance/login')

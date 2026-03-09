@@ -1,5 +1,19 @@
-import { redirect } from "next/navigation"
+"use client"
+
+import { useEffect } from "react"
+import { corporateTokenStorage } from "@/lib/corporateAuth"
+
+const BAIKALSPHERE_URL = process.env.NEXT_PUBLIC_BAIKALSPHERE_URL || "http://localhost:3000"
 
 export default function CorporateLoginPage() {
-  redirect("/")
+  useEffect(() => {
+    corporateTokenStorage.clear()
+    window.location.href = `${BAIKALSPHERE_URL}/dashboard`
+  }, [])
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+    </div>
+  )
 }

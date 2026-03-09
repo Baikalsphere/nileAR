@@ -72,19 +72,21 @@ export default function Sidebar({ title, logoIcon }: SidebarProps) {
   const isCorporateUsersActive = pathname === corporateUsersHref
 
   const handleLogout = async () => {
+    const baikalsphereUrl = process.env.NEXT_PUBLIC_BAIKALSPHERE_URL || 'http://localhost:3000'
+
     if (isCorporatePortal) {
       await logoutCorporate()
-      router.push('/corporate-portal/login')
+      window.location.href = `${baikalsphereUrl}/dashboard`
       return
     }
 
     if (isHotelFinance) {
       await logout()
-      router.push('/hotel-finance/login')
+      window.location.href = `${baikalsphereUrl}/dashboard`
       return
     }
 
-    router.push('/')
+    window.location.href = `${baikalsphereUrl}/dashboard`
   }
 
   return (

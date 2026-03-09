@@ -24,7 +24,7 @@ interface Organization {
   contractStatus?: 'draft' | 'sent' | 'signed' | null
   amountReceived: number
   pendingPayment: number
-  initialOutstanding: number
+  initialOutstanding?: number
 }
 
 interface ApiOrganization {
@@ -615,7 +615,7 @@ export default function OrganizationsClient() {
         current.map((o) => {
           if (o.id !== editingOrg.id) return o
           const newInitial = Number(data.organization?.initialOutstanding ?? 0)
-          const invoiceOutstanding = o.pendingPayment - o.initialOutstanding
+          const invoiceOutstanding = o.pendingPayment - (o.initialOutstanding ?? 0)
           return {
             ...o,
             name: data.organization?.name ?? o.name,
