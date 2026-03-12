@@ -65,6 +65,49 @@ const provisionBaikalsphereUser = async (email: string, fullName: string, passwo
   }
 };
 
+// Provision/sync an organization to Baikalsphere centralized system
+export const provisionBaikalsphereOrganization = async (
+  arOrgId: string,
+  name: string,
+  contactEmail: string,
+  corporatePasswordHash: string,
+  gst?: string | null,
+  createdByArUserId?: string
+): Promise<{ organizationId: string; slug: string } | null> => {
+  if (!config.baikalsphereAuthUrl || !config.baikalsphereInternalSecret) {
+    console.log("[baikalsphere] Skipping org sync - no auth URL or secret configured");
+    return null;
+  }
+  try {
+    const resp = await fetch(`${config.baikalsphereAuthUrl}/api/internal/provision-organization`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Internal-Secret": config.baikalsphereInternalSecret,
+      },
+      body: JSON.stringify({
+        arOrgId,
+        name,
+        contactEmail,
+        corporatePasswordHash,
+        gst: gst ?? null,
+        industry: "hospitality",
+        createdByArUserId,
+      }),
+    });
+    if (!resp.ok) {
+      console.error("[baikalsphere] Organization provision failed:", resp.status, await resp.text());
+      return null;
+    }
+    const data = await resp.json() as { organizationId: string; slug: string; isNew: boolean };
+    console.log(`[baikalsphere] Organization synced: ${arOrgId} -> ${data.organizationId} (${data.isNew ? "created" : "updated"})`);
+    return { organizationId: data.organizationId, slug: data.slug };
+  } catch (err: any) {
+    console.error("[baikalsphere] Organization provision error:", err?.message);
+    return null;
+  }
+};
+
 const registerSchema = z.object({
   email: z.string().email().max(320),
   password: z.string().min(12).max(128),
