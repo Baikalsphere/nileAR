@@ -17,6 +17,7 @@ import {
   sendContractSignatureLinkEmail,
   sendCorporateCredentialsEmail
 } from "../services/mailer.js";
+import { provisionBaikalsphereOrganization } from "./auth.js";
 
 const router = Router();
 
@@ -749,6 +750,81 @@ const createContractPdfBuffer = async (contractData: Record<string, any>, contra
 };
 
 let ensureHotelOrganizationsTablePromise: Promise<void> | null = null;
+let ensureOrganizationContractsSchemaPromise: Promise<void> | null = null;
+
+const ensureOrganizationContractsSchema = async () => {
+  if (!ensureOrganizationContractsSchemaPromise) {
+    ensureOrganizationContractsSchemaPromise = (async () => {
+      await query(
+        `ALTER TABLE organizations
+         ADD COLUMN IF NOT EXISTS contact_person text,
+         ADD COLUMN IF NOT EXISTS billing_address text,
+         ADD COLUMN IF NOT EXISTS pan_card text,
+         ADD COLUMN IF NOT EXISTS registration_number text,
+         ADD COLUMN IF NOT EXISTS registered_address text,
+         ADD COLUMN IF NOT EXISTS contact_email citext,
+         ADD COLUMN IF NOT EXISTS contact_phone text,
+         ADD COLUMN IF NOT EXISTS created_by_user_id uuid REFERENCES users(id) ON DELETE SET NULL`
+      );
+
+      await query(
+        `CREATE TABLE IF NOT EXISTS organization_contracts (
+           id text PRIMARY KEY,
+           organization_id text NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+           hotel_user_id uuid REFERENCES users(id) ON DELETE SET NULL,
+           status text NOT NULL DEFAULT 'draft',
+           contract_data jsonb NOT NULL,
+           pdf_storage_path text,
+           sign_token text UNIQUE,
+           sign_token_expires_at timestamptz,
+           signed_by text,
+           signed_designation text,
+           signature_data_url text,
+           signed_at timestamptz,
+           created_by text,
+           created_at timestamptz NOT NULL DEFAULT now(),
+           updated_at timestamptz NOT NULL DEFAULT now()
+         )`
+      );
+
+      await query(
+        `ALTER TABLE organization_contracts
+         ADD COLUMN IF NOT EXISTS hotel_user_id uuid REFERENCES users(id) ON DELETE SET NULL,
+         ADD COLUMN IF NOT EXISTS pdf_storage_path text,
+         ADD COLUMN IF NOT EXISTS contract_data jsonb,
+         ADD COLUMN IF NOT EXISTS sign_token text,
+         ADD COLUMN IF NOT EXISTS sign_token_expires_at timestamptz,
+         ADD COLUMN IF NOT EXISTS signed_by text,
+         ADD COLUMN IF NOT EXISTS signed_designation text,
+         ADD COLUMN IF NOT EXISTS signature_data_url text,
+         ADD COLUMN IF NOT EXISTS signed_at timestamptz,
+         ADD COLUMN IF NOT EXISTS created_by text,
+         ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now(),
+         ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()`
+      );
+
+      await query(
+        `CREATE INDEX IF NOT EXISTS organization_contracts_organization_id_idx
+         ON organization_contracts(organization_id)`
+      );
+
+      await query(
+        `CREATE INDEX IF NOT EXISTS organization_contracts_hotel_user_id_idx
+         ON organization_contracts(hotel_user_id)`
+      );
+
+      await query(
+        `CREATE INDEX IF NOT EXISTS organization_contracts_org_hotel_created_idx
+         ON organization_contracts(organization_id, hotel_user_id, created_at DESC)`
+      );
+    })().catch((error) => {
+      ensureOrganizationContractsSchemaPromise = null;
+      throw error;
+    });
+  }
+
+  await ensureOrganizationContractsSchemaPromise;
+};
 
 const ensureHotelOrganizationsTable = async () => {
   if (!ensureHotelOrganizationsTablePromise) {
@@ -799,6 +875,7 @@ router.options("/contracts/sign/:token/pdf", async (req: Request, res: Response)
 
 router.get("/contracts/sign/:token", async (req: Request, res: Response, next: NextFunction) => {
   try {
+    await ensureOrganizationContractsSchema();
     const token = req.params.token;
 
     const result = await query(
@@ -867,6 +944,7 @@ router.get("/contracts/sign/:token", async (req: Request, res: Response, next: N
 
 router.get("/contracts/sign/:token/pdf", async (req: Request, res: Response, next: NextFunction) => {
   try {
+    await ensureOrganizationContractsSchema();
     const token = req.params.token;
 
     const result = await query(
@@ -915,6 +993,7 @@ router.get("/contracts/sign/:token/pdf", async (req: Request, res: Response, nex
 
 router.post("/contracts/sign/:token", async (req: Request, res: Response, next: NextFunction) => {
   try {
+    await ensureOrganizationContractsSchema();
     const token = req.params.token;
     const payload = submitSignatureSchema.parse(req.body);
 
@@ -969,6 +1048,7 @@ router.post("/contracts/sign/:token", async (req: Request, res: Response, next: 
 router.use(requireAuth);
 router.use(async (_req: Request, _res: Response, next: NextFunction) => {
   try {
+    await ensureOrganizationContractsSchema();
     await ensureHotelOrganizationsTable();
     return next();
   } catch (error) {
@@ -1404,6 +1484,15 @@ router.post("/:organizationId/contracts", async (req: Request, res: Response, ne
     if (error?.code === "23505") {
       return res.status(409).json({ error: { message: "Try generating the contract again" } });
     }
+    if (error?.code === "42703" || error?.code === "42P01") {
+      return res.status(500).json({ error: { message: "Database schema is outdated. Run npm run db:setup in server and retry." } });
+    }
+    if (error instanceof Error) {
+      const lowerMessage = error.message.toLowerCase();
+      if (lowerMessage.includes("supabase") || lowerMessage.includes("storage") || lowerMessage.includes("bucket")) {
+        return res.status(500).json({ error: { message: error.message } });
+      }
+    }
     return next(error);
   }
 });
@@ -1769,6 +1858,26 @@ router.post("/", async (req: Request, res: Response, next: NextFunction) => {
            ON CONFLICT (hotel_user_id, organization_id) DO NOTHING`,
           [userId, organization.id]
         );
+
+        // Sync organization to Baikalsphere centralized system (async, don't block response)
+        provisionBaikalsphereOrganization(
+          organization.id,
+          organization.name,
+          normalizedCorporateEmail,
+          corporatePasswordHash,
+          payload.gst,
+          userId
+        ).then(async (result) => {
+          if (result) {
+            // Update AR organization with baikalsphere reference
+            await query(
+              `UPDATE organizations SET baikalsphere_organization_id = $1, baikalsphere_slug = $2 WHERE id = $3`,
+              [result.organizationId, result.slug, organization.id]
+            );
+          }
+        }).catch((err) => {
+          console.error("[baikalsphere] Background org sync failed:", err);
+        });
 
         return res.status(201).json({
           organization: {
