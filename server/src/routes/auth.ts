@@ -42,49 +42,26 @@ const DUMMY_PASSWORD_HASH = "$2b$10$N9qo8uLOickgx2ZMRZo5i.ejFrP8T6F8mT7V0pX0rW2f
 let ensureBookingRequestsTablePromise: Promise<void> | null = null;
 
 // Provision a user in Baikalsphere (for sub-user SSO)
-const provisionBaikalsphereUser = async (
-  email: string,
-  fullName: string,
-  passwordHash: string,
-  options?: {
-    platformRole?: "superadmin" | "org_admin" | "member";
-    organizationId?: string | null;
-    isActive?: boolean;
-    roleAssignments?: Array<{ moduleId: string; roleNames: string[] }>;
-  }
-): Promise<string | null> => {
+const provisionBaikalsphereUser = async (email: string, fullName: string, passwordHash: string): Promise<string | null> => {
   if (!config.baikalsphereAuthUrl || !config.baikalsphereInternalSecret) return null;
-  const roleAssignments = options?.roleAssignments ?? [];
-  const moduleIds = Array.from(new Set(["ar", ...roleAssignments.map((assignment) => assignment.moduleId)]));
-
   try {
-    const resp = await fetch(`${config.baikalsphereAuthUrl}/internal/provision-user`, {
+    const resp = await fetch(`${config.baikalsphereAuthUrl}/api/internal/provision-user`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "X-Internal-Secret": config.baikalsphereInternalSecret,
       },
-      body: JSON.stringify({
-        email,
-        fullName,
-        passwordHash,
-        moduleIds,
-        platformRole: options?.platformRole ?? "member",
-        organizationId: options?.organizationId,
-        isActive: options?.isActive,
-        roleAssignments,
-      }),
+      body: JSON.stringify({ email, fullName, passwordHash, moduleIds: ["ar"] }),
     });
     if (!resp.ok) {
-      const errorText = await resp.text();
-      console.error("[baikalsphere] Provision failed:", resp.status, errorText);
-      throw new Error(`Baikalsphere user provision failed (${resp.status})`);
+      console.error("[baikalsphere] Provision failed:", resp.status, await resp.text());
+      return null;
     }
     const data = await resp.json() as { userId: string };
     return data.userId;
   } catch (err: any) {
     console.error("[baikalsphere] Provision error:", err?.message);
-    throw err;
+    return null;
   }
 };
 
@@ -96,13 +73,13 @@ export const provisionBaikalsphereOrganization = async (
   corporatePasswordHash: string,
   gst?: string | null,
   createdByArUserId?: string
-): Promise<{ organizationId: string; slug: string; userId: string } | null> => {
+): Promise<{ organizationId: string; slug: string } | null> => {
   if (!config.baikalsphereAuthUrl || !config.baikalsphereInternalSecret) {
     console.log("[baikalsphere] Skipping org sync - no auth URL or secret configured");
     return null;
   }
   try {
-    const resp = await fetch(`${config.baikalsphereAuthUrl}/internal/provision-organization`, {
+    const resp = await fetch(`${config.baikalsphereAuthUrl}/api/internal/provision-organization`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -122,9 +99,9 @@ export const provisionBaikalsphereOrganization = async (
       console.error("[baikalsphere] Organization provision failed:", resp.status, await resp.text());
       return null;
     }
-    const data = await resp.json() as { organizationId: string; slug: string; userId: string; isNew: boolean };
+    const data = await resp.json() as { organizationId: string; slug: string; isNew: boolean };
     console.log(`[baikalsphere] Organization synced: ${arOrgId} -> ${data.organizationId} (${data.isNew ? "created" : "updated"})`);
-    return { organizationId: data.organizationId, slug: data.slug, userId: data.userId };
+    return { organizationId: data.organizationId, slug: data.slug };
   } catch (err: any) {
     console.error("[baikalsphere] Organization provision error:", err?.message);
     return null;
@@ -350,24 +327,6 @@ const createGeneratedHotelPassword = () => {
     .split("")
     .sort(() => Math.random() - 0.5)
     .join("");
-};
-
-const getPortalRoleAssignments = (role: string) => [{
-  moduleId: "ar",
-  roleNames: [role === "admin" ? "finance_user" : "viewer"]
-}];
-
-const syncBaikalsphereHotelAdmin = async (params: {
-  email: string;
-  fullName: string;
-  passwordHash: string;
-  isActive?: boolean;
-}) => {
-  return provisionBaikalsphereUser(params.email, params.fullName, params.passwordHash, {
-    platformRole: "member",
-    isActive: params.isActive,
-    roleAssignments: [{ moduleId: "ar", roleNames: ["hotel_admin"] }]
-  });
 };
 
 const parseTtlMs = (ttl: string) => {
@@ -893,21 +852,14 @@ router.post("/register", authLimiter, async (req, res, next) => {
   try {
     const { email, password, fullName } = registerSchema.parse(req.body);
     const normalizedEmail = email.trim().toLowerCase();
-    const normalizedFullName = normalizeOptional(fullName) ?? normalizedEmail.split("@")[0];
 
     const passwordHash = await bcrypt.hash(password, config.bcryptCost);
-    const bsUserId = await syncBaikalsphereHotelAdmin({
-      email: normalizedEmail,
-      fullName: normalizedFullName,
-      passwordHash,
-      isActive: true
-    });
 
     const result = await query(
-      `INSERT INTO users (email, password_hash, full_name, baikalsphere_user_id)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO users (email, password_hash, full_name)
+       VALUES ($1, $2, $3)
        RETURNING id, email, role, created_at`,
-      [normalizedEmail, passwordHash, normalizedFullName, bsUserId]
+      [normalizedEmail, passwordHash, fullName ?? null]
     );
 
     const user = result.rows[0];
@@ -921,7 +873,7 @@ router.post("/register", authLimiter, async (req, res, next) => {
          contact_email = COALESCE(hotel_profiles.contact_email, EXCLUDED.contact_email)`,
       [
         user.id,
-        normalizedFullName,
+        fullName?.trim() || normalizedEmail.split("@")[0],
         normalizedEmail
       ]
     );
@@ -958,26 +910,19 @@ router.post("/admin/hotel-accounts", async (req, res, next) => {
     const normalizedEmail = parsed.email.trim().toLowerCase();
     const normalizedHotelName = parsed.hotelName.trim();
     const normalizedFullName = normalizeOptional(parsed.fullName);
-    const effectiveFullName = normalizedFullName ?? normalizedHotelName;
 
     const generatedPassword = createGeneratedHotelPassword();
     const passwordHash = await bcrypt.hash(generatedPassword, config.bcryptCost);
-    const bsUserId = await syncBaikalsphereHotelAdmin({
-      email: normalizedEmail,
-      fullName: effectiveFullName,
-      passwordHash,
-      isActive: true
-    });
     const client: PoolClient = await pool.connect();
 
     try {
       await client.query("BEGIN");
 
       const createdUserResult = await client.query(
-        `INSERT INTO users (email, password_hash, full_name, role, baikalsphere_user_id)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO users (email, password_hash, full_name, role)
+         VALUES ($1, $2, $3, $4)
          RETURNING id, email, role`,
-        [normalizedEmail, passwordHash, effectiveFullName, "hotel_finance_user", bsUserId]
+        [normalizedEmail, passwordHash, normalizedFullName, "hotel_finance_user"]
       );
 
       const createdUser = createdUserResult.rows[0] as {
@@ -1056,7 +1001,7 @@ router.post("/login", authLimiter, async (req, res, next) => {
 
     // First try main users table (admin)
     const userResult = await query(
-      `SELECT id, email, role, password_hash, is_active, failed_login_attempts, locked_until, full_name, baikalsphere_user_id
+      `SELECT id, email, role, password_hash, is_active, failed_login_attempts, locked_until
        FROM users WHERE email = $1`,
       [normalizedEmail]
     );
@@ -1156,26 +1101,6 @@ router.post("/login", authLimiter, async (req, res, next) => {
         normalizedEmail
       ]
     );
-
-    if (!user.baikalsphere_user_id) {
-      try {
-        const bsUserId = await syncBaikalsphereHotelAdmin({
-          email: normalizedEmail,
-          fullName: normalizeOptional(user.full_name) ?? normalizedEmail.split("@")[0],
-          passwordHash: user.password_hash,
-          isActive: Boolean(user.is_active)
-        });
-
-        if (bsUserId) {
-          await query(
-            `UPDATE users SET baikalsphere_user_id = $2 WHERE id = $1`,
-            [user.id, bsUserId]
-          );
-        }
-      } catch (provisionError: any) {
-        console.error("[baikalsphere] Hotel admin sync during login failed:", provisionError?.message);
-      }
-    }
 
     const accessToken = createAccessToken(user.id, user.role);
     const refreshToken = await createRefreshToken(user.id, req.get("user-agent"), req.ip);
@@ -3073,18 +2998,21 @@ router.post("/hotel/users", async (req, res, next) => {
     );
     const hotelName = hotelResult.rows[0]?.hotel_name || "Hotel";
 
-    const bsUserId = await provisionBaikalsphereUser(normalizedEmail, form.fullName.trim(), passwordHash, {
-      platformRole: "member",
-      isActive: true,
-      roleAssignments: getPortalRoleAssignments(form.role)
-    });
-
     const result = await query(
-      `INSERT INTO portal_users (portal_type, parent_id, full_name, email, password_hash, role, allowed_pages, baikalsphere_user_id)
-       VALUES ('hotel_finance', $1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO portal_users (portal_type, parent_id, full_name, email, password_hash, role, allowed_pages)
+       VALUES ('hotel_finance', $1, $2, $3, $4, $5, $6)
        RETURNING id, full_name, email, role, allowed_pages, is_active, created_at, updated_at`,
-      [payload.sub, form.fullName.trim(), normalizedEmail, passwordHash, form.role, form.allowedPages, bsUserId]
+      [payload.sub, form.fullName.trim(), normalizedEmail, passwordHash, form.role, form.allowedPages]
     );
+
+    // Provision in Baikalsphere for SSO
+    const bsUserId = await provisionBaikalsphereUser(normalizedEmail, form.fullName.trim(), passwordHash);
+    if (bsUserId) {
+      await query(
+        `UPDATE portal_users SET baikalsphere_user_id = $1 WHERE id = $2`,
+        [bsUserId, result.rows[0].id]
+      );
+    }
 
     // Send credentials email
     try {
@@ -3154,7 +3082,7 @@ router.put("/hotel/users/:userId", async (req, res, next) => {
       `UPDATE portal_users
        SET ${setClauses.join(", ")}
        WHERE id = $1 AND parent_id = $2 AND portal_type = 'hotel_finance'
-       RETURNING id, full_name, email, role, allowed_pages, is_active, created_at, updated_at, password_hash, baikalsphere_user_id`,
+       RETURNING id, full_name, email, role, allowed_pages, is_active, created_at, updated_at`,
       params
     );
 
@@ -3162,27 +3090,7 @@ router.put("/hotel/users/:userId", async (req, res, next) => {
       return res.status(404).json({ error: { message: "User not found" } });
     }
 
-    const updatedUser = result.rows[0];
-    if (updatedUser.baikalsphere_user_id) {
-      await provisionBaikalsphereUser(updatedUser.email, updatedUser.full_name, updatedUser.password_hash, {
-        platformRole: "member",
-        isActive: Boolean(updatedUser.is_active),
-        roleAssignments: getPortalRoleAssignments(updatedUser.role)
-      });
-    }
-
-    return res.status(200).json({
-      user: {
-        id: updatedUser.id,
-        full_name: updatedUser.full_name,
-        email: updatedUser.email,
-        role: updatedUser.role,
-        allowed_pages: updatedUser.allowed_pages,
-        is_active: updatedUser.is_active,
-        created_at: updatedUser.created_at,
-        updated_at: updatedUser.updated_at
-      }
-    });
+    return res.status(200).json({ user: result.rows[0] });
   } catch (error) {
     return next(error);
   }
@@ -3224,7 +3132,7 @@ router.post("/hotel/user/change-password", async (req, res, next) => {
     // If admin, use existing change password logic (users table)
     if (!payload.isSubUser) {
       const userResult = await query(
-        `SELECT id, email, full_name, password_hash, is_active FROM users WHERE id = $1 LIMIT 1`,
+        `SELECT id, password_hash, is_active FROM users WHERE id = $1 LIMIT 1`,
         [payload.sub]
       );
 
@@ -3244,19 +3152,12 @@ router.post("/hotel/user/change-password", async (req, res, next) => {
         [payload.sub, passwordHash]
       );
 
-      await syncBaikalsphereHotelAdmin({
-        email: user.email,
-        fullName: normalizeOptional(user.full_name) ?? user.email.split("@")[0],
-        passwordHash,
-        isActive: Boolean(user.is_active)
-      });
-
       return res.status(200).json({ ok: true });
     }
 
     // Sub-user ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ find by parent_id + allowedPages match
     const puResult = await query(
-      `SELECT id, email, full_name, password_hash, role, is_active FROM portal_users
+      `SELECT id, password_hash FROM portal_users
        WHERE parent_id = $1 AND portal_type = 'hotel_finance'`,
       [payload.sub]
     );
@@ -3280,12 +3181,6 @@ router.post("/hotel/user/change-password", async (req, res, next) => {
       `UPDATE portal_users SET password_hash = $2, password_reset_required = false WHERE id = $1`,
       [matchedUser.id, passwordHash]
     );
-
-    await provisionBaikalsphereUser(matchedUser.email, matchedUser.full_name, passwordHash, {
-      platformRole: "member",
-      isActive: Boolean(matchedUser.is_active),
-      roleAssignments: getPortalRoleAssignments(matchedUser.role)
-    });
 
     return res.status(200).json({ ok: true });
   } catch (error) {
@@ -3351,18 +3246,21 @@ router.post("/corporate/users", async (req, res, next) => {
     );
     const orgName = orgResult.rows[0]?.name || "Organization";
 
-    const bsUserId = await provisionBaikalsphereUser(normalizedEmail, form.fullName.trim(), passwordHash, {
-      platformRole: "member",
-      isActive: true,
-      roleAssignments: getPortalRoleAssignments(form.role)
-    });
-
     const result = await query(
-      `INSERT INTO portal_users (portal_type, parent_id, full_name, email, password_hash, role, allowed_pages, baikalsphere_user_id)
-       VALUES ('corporate', $1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO portal_users (portal_type, parent_id, full_name, email, password_hash, role, allowed_pages)
+       VALUES ('corporate', $1, $2, $3, $4, $5, $6)
        RETURNING id, full_name, email, role, allowed_pages, is_active, created_at, updated_at`,
-      [payload.sub, form.fullName.trim(), normalizedEmail, passwordHash, form.role, form.allowedPages, bsUserId]
+      [payload.sub, form.fullName.trim(), normalizedEmail, passwordHash, form.role, form.allowedPages]
     );
+
+    // Provision in Baikalsphere for SSO
+    const bsUserId = await provisionBaikalsphereUser(normalizedEmail, form.fullName.trim(), passwordHash);
+    if (bsUserId) {
+      await query(
+        `UPDATE portal_users SET baikalsphere_user_id = $1 WHERE id = $2`,
+        [bsUserId, result.rows[0].id]
+      );
+    }
 
     // Send credentials email
     try {
@@ -3432,7 +3330,7 @@ router.put("/corporate/users/:userId", async (req, res, next) => {
       `UPDATE portal_users
        SET ${setClauses.join(", ")}
        WHERE id = $1 AND parent_id = $2 AND portal_type = 'corporate'
-       RETURNING id, full_name, email, role, allowed_pages, is_active, created_at, updated_at, password_hash, baikalsphere_user_id`,
+       RETURNING id, full_name, email, role, allowed_pages, is_active, created_at, updated_at`,
       params
     );
 
@@ -3440,27 +3338,7 @@ router.put("/corporate/users/:userId", async (req, res, next) => {
       return res.status(404).json({ error: { message: "User not found" } });
     }
 
-    const updatedUser = result.rows[0];
-    if (updatedUser.baikalsphere_user_id) {
-      await provisionBaikalsphereUser(updatedUser.email, updatedUser.full_name, updatedUser.password_hash, {
-        platformRole: "member",
-        isActive: Boolean(updatedUser.is_active),
-        roleAssignments: getPortalRoleAssignments(updatedUser.role)
-      });
-    }
-
-    return res.status(200).json({
-      user: {
-        id: updatedUser.id,
-        full_name: updatedUser.full_name,
-        email: updatedUser.email,
-        role: updatedUser.role,
-        allowed_pages: updatedUser.allowed_pages,
-        is_active: updatedUser.is_active,
-        created_at: updatedUser.created_at,
-        updated_at: updatedUser.updated_at
-      }
-    });
+    return res.status(200).json({ user: result.rows[0] });
   } catch (error) {
     return next(error);
   }
@@ -3522,37 +3400,6 @@ router.post("/corporate/user/change-password", async (req, res, next) => {
         [payload.sub, passwordHash]
       );
 
-      const syncResult = await query(
-        `SELECT id, name, contact_email, gst, baikalsphere_user_id
-         FROM organizations
-         WHERE id = $1
-         LIMIT 1`,
-        [payload.sub]
-      );
-
-      const organization = syncResult.rows[0];
-      if (organization?.contact_email) {
-        const provisioned = await provisionBaikalsphereOrganization(
-          organization.id,
-          organization.name,
-          organization.contact_email,
-          passwordHash,
-          organization.gst,
-          undefined
-        );
-
-        if (provisioned) {
-          await query(
-            `UPDATE organizations
-             SET baikalsphere_organization_id = $2,
-                 baikalsphere_slug = $3,
-                 baikalsphere_user_id = $4
-             WHERE id = $1`,
-            [organization.id, provisioned.organizationId, provisioned.slug, provisioned.userId]
-          );
-        }
-      }
-
       return res.status(200).json({ ok: true });
     }
 
@@ -3562,8 +3409,7 @@ router.post("/corporate/user/change-password", async (req, res, next) => {
     }
 
     const puResult = await query(
-      `SELECT id, email, full_name, password_hash, role, is_active
-       FROM portal_users WHERE id = $1 AND portal_type = 'corporate'`,
+      `SELECT id, password_hash FROM portal_users WHERE id = $1 AND portal_type = 'corporate'`,
       [payload.portalUserId]
     );
 
@@ -3583,12 +3429,6 @@ router.post("/corporate/user/change-password", async (req, res, next) => {
       [portalUser.id, passwordHash]
     );
 
-    await provisionBaikalsphereUser(portalUser.email, portalUser.full_name, passwordHash, {
-      platformRole: "member",
-      isActive: Boolean(portalUser.is_active),
-      roleAssignments: getPortalRoleAssignments(portalUser.role)
-    });
-
     return res.status(200).json({ ok: true });
   } catch (error) {
     return next(error);
@@ -3596,4 +3436,3 @@ router.post("/corporate/user/change-password", async (req, res, next) => {
 });
 
 export default router;
-
