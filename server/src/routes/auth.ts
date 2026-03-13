@@ -950,14 +950,28 @@ router.post("/admin/hotel-accounts", async (req, res, next) => {
 
       await client.query("COMMIT");
 
+      // Provision user to Baikalsphere centralized auth system
+      const baikalsphereUserId = await provisionBaikalsphereUser(
+        normalizedEmail,
+        normalizedFullName || normalizedEmail,
+        passwordHash
+      );
+
+      if (baikalsphereUserId) {
+        console.log(`[admin/hotel-accounts] User ${normalizedEmail} provisioned to Baikalsphere: ${baikalsphereUserId}`);
+      } else {
+        console.warn(`[admin/hotel-accounts] Failed to provision user ${normalizedEmail} to Baikalsphere`);
+      }
+
       return res.status(201).json({
         account: {
           id: createdUser.id,
           email: createdUser.email,
           role: createdUser.role,
-          hotelName: normalizedHotelName
+          hotelName: normalizedHotelName,
+          baikalsphereUserId
         },
-        message: "Hotel account created and credentials sent to registered email"
+        message: "Hotel account created, linked to Baikalsphere, and credentials sent to registered email"
       });
     } catch (error) {
       await client.query("ROLLBACK");

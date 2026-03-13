@@ -34,6 +34,7 @@ export interface AdminCreatedHotelAccount {
   email: string;
   role: string;
   hotelName: string;
+  baikalsphereUserId?: string;
 }
 
 export interface AdminCreateHotelAccountResponse {

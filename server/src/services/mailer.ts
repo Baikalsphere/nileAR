@@ -140,6 +140,9 @@ export const sendHotelCredentialsEmail = async (payload: {
       `User ID: ${payload.userId}`,
       `Password: ${payload.password}`,
       "",
+      "Your account has been linked to the Baikalsphere centralized authentication system.",
+      "You can now access both the Hotel Finance module and other Baikalsphere modules with your credentials.",
+      "",
       "Visit the Hotel Profile section to update your password.",
       ""
     ].join("\n"),
@@ -148,6 +151,8 @@ export const sendHotelCredentialsEmail = async (payload: {
       <p>Your Hotel Finance account has been created.</p>
       <p>Your login credentials are:</p>
       <p><strong>User ID:</strong> ${payload.userId}<br/><strong>Password:</strong> ${payload.password}</p>
+      <p>Your account has been linked to the <strong>Baikalsphere</strong> centralized authentication system.<br/>
+      You can now access both the Hotel Finance module and other Baikalsphere modules with your credentials.</p>
       <p>Visit the Hotel Profile section to update your password.</p>
     `
   });
