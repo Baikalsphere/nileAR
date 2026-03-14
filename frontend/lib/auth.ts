@@ -42,10 +42,38 @@ export interface AdminCreateHotelAccountResponse {
   message: string;
 }
 
-const apiBaseUrl =
+const configuredApiBaseUrl =
   process.env.NEXT_PUBLIC_API_URL ??
-  process.env.NEXT_PUBLIC_API_BASE_URL ??
-  "http://localhost:4000";
+  process.env.NEXT_PUBLIC_API_BASE_URL;
+
+const resolveApiBaseUrl = () => {
+  if (typeof window !== "undefined") {
+    const { origin, protocol, hostname } = window.location;
+
+    if (!configuredApiBaseUrl) {
+      return origin;
+    }
+
+    try {
+      const parsed = new URL(configuredApiBaseUrl);
+      const isSameHost = parsed.hostname === hostname;
+      if (protocol === "https:" && parsed.protocol === "http:" && isSameHost) {
+        parsed.protocol = "https:";
+        return parsed.toString().replace(/\/$/, "");
+      }
+      return parsed.toString().replace(/\/$/, "");
+    } catch {
+      if (configuredApiBaseUrl.startsWith("/")) {
+        return origin;
+      }
+      return configuredApiBaseUrl.replace(/\/$/, "");
+    }
+  }
+
+  return configuredApiBaseUrl ?? "http://localhost:4000";
+};
+
+const apiBaseUrl = resolveApiBaseUrl();
 
 const toAbsoluteApiUrl = (value?: string | null) => {
   if (!value) {

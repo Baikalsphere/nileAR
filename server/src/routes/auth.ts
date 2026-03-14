@@ -473,10 +473,19 @@ const getCorporatePayload = async (req: Request, res: Response): Promise<Corpora
         return null;
       }
 
-      // Look up the Baikalsphere user ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ AR organization mapping
+      // Look up AR organization mapping by Baikalsphere user OR organization claim.
       const orgResult = await query(
-        `SELECT id, corporate_user_id FROM organizations WHERE baikalsphere_user_id = $1`,
-        [bsPayload.sub]
+        `SELECT id, corporate_user_id
+         FROM organizations
+         WHERE baikalsphere_user_id = $1
+            OR (
+              $2::text IS NOT NULL AND (
+                baikalsphere_organization_id::text = $2
+                OR lower(contact_email::text) = lower($3)
+              )
+            )
+         LIMIT 1`,
+        [bsPayload.sub, bsPayload.orgId ?? null, bsPayload.email]
       );
 
       if (orgResult.rowCount! > 0) {
@@ -599,6 +608,11 @@ const getHotelPayload = async (req: Request, res: Response): Promise<HotelAccess
           iss: bsPayload.iss,
           aud: bsPayload.aud,
         };
+      }
+
+      if (bsPayload.orgId) {
+        res.status(403).json({ error: { message: "Organization users must access the corporate portal" } });
+        return null;
       }
 
       // Fallback: use Baikalsphere UUID directly (for auto-provisioning)
@@ -993,12 +1007,22 @@ router.post("/admin/hotel-accounts", async (req, res, next) => {
       return res.status(409).json({ error: { message: "Email already registered" } });
     }
 
+    const mailConfigError =
+      typeof error?.message === "string" &&
+      (
+        error.message.includes("Email service is not configured") ||
+        error.message.includes("SMTP email service is not configured") ||
+        error.message.includes("Resend email service is not configured") ||
+        error.message.includes("Resend send failed")
+      );
+
     if (
       error?.code === "EAUTH" ||
       error?.code === "ETIMEDOUT" ||
       error?.code === "ESOCKET" ||
       error?.code === "ECONNECTION" ||
-      error?.code === "ERESEND"
+      error?.code === "ERESEND" ||
+      mailConfigError
     ) {
       const details = [error?.code, error?.responseCode].filter(Boolean).join("/");
       return res.status(502).json({ error: { message: `Failed to send credentials email. Check mail provider configuration on server.${details ? ` (${details})` : ""}` } });
@@ -1259,12 +1283,26 @@ router.get("/resolve-portal", async (req, res, next) => {
       return res.status(403).json({ error: { message: "No access to AR module" } });
     }
 
-    // Check organizations FIRST (org users take priority over auto-provisioned hotel accounts)
+    // Check organizations FIRST (org users take priority over auto-provisioned hotel accounts).
+    // Match by Baikalsphere user mapping OR organization claim for robust RBAC behavior.
     const orgResult = await query(
-      `SELECT id FROM organizations WHERE baikalsphere_user_id = $1`,
-      [bsPayload.sub]
+      `SELECT id
+       FROM organizations
+       WHERE baikalsphere_user_id = $1
+          OR (
+            $2::text IS NOT NULL AND (
+              baikalsphere_organization_id::text = $2
+              OR lower(contact_email::text) = lower($3)
+            )
+          )
+       LIMIT 1`,
+      [bsPayload.sub, bsPayload.orgId ?? null, bsPayload.email]
     );
     if (orgResult.rowCount! > 0) {
+      return res.json({ portal: "corporate-portal" });
+    }
+
+    if (bsPayload.orgId) {
       return res.json({ portal: "corporate-portal" });
     }
 

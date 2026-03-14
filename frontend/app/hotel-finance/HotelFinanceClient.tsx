@@ -50,6 +50,13 @@ export default function HotelFinanceClient() {
       } catch (loadError) {
         const message = loadError instanceof Error ? loadError.message : 'Failed to load dashboard'
         setError(message)
+        if (message.toLowerCase().includes('corporate portal')) {
+          const currentToken = tokenStorage.get()
+          if (currentToken) {
+            router.replace(`/corporate-portal?token=${encodeURIComponent(currentToken)}`)
+            return
+          }
+        }
         if (message.toLowerCase().includes('unauthorized')) {
           tokenStorage.clear()
           router.replace('/hotel-finance/login')
