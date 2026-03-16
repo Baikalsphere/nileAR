@@ -24,7 +24,11 @@ const router = Router();
 const createOrganizationSchema = z.object({
   name: z.string().min(2).max(160),
   corporateEmail: z.string().email().max(320),
-  gst: z.string().max(32).optional().nullable(),
+  gst: z
+    .string()
+    .trim()
+    .length(15, "GST must be exactly 15 characters")
+    .regex(/^[A-Za-z0-9]{15}$/, "GST must be 15 alphanumeric characters"),
   creditPeriod: z.string().max(60).optional().nullable(),
   paymentTerms: z.string().max(120).optional().nullable(),
   status: z.enum(["active", "on-hold", "inactive"]).default("active"),
@@ -1819,6 +1823,7 @@ router.post("/", async (req: Request, res: Response, next: NextFunction) => {
     const userId = req.user?.id;
     const payload = createOrganizationSchema.parse(req.body);
     const normalizedCorporateEmail = payload.corporateEmail.trim().toLowerCase();
+    const normalizedGst = payload.gst.trim().toUpperCase();
 
     for (let attempt = 0; attempt < 8; attempt += 1) {
       const organizationId = createOrganizationId();
@@ -1838,7 +1843,7 @@ router.post("/", async (req: Request, res: Response, next: NextFunction) => {
           [
             organizationId,
             payload.name.trim(),
-            payload.gst ?? null,
+            normalizedGst,
             payload.creditPeriod ?? null,
             payload.paymentTerms ?? null,
             payload.status,
@@ -1865,7 +1870,7 @@ router.post("/", async (req: Request, res: Response, next: NextFunction) => {
           organization.name,
           normalizedCorporateEmail,
           corporatePasswordHash,
-          payload.gst,
+          normalizedGst,
           userId
         ).then(async (result) => {
           if (result) {

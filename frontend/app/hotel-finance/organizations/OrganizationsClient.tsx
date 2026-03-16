@@ -372,6 +372,14 @@ export default function OrganizationsClient() {
     setGeneratedCredentials(null)
     setSendCredentialsMessage(null)
     setSendCredentialsError(null)
+
+    const normalizedGst = gst.trim().toUpperCase()
+
+    if (!existingOrganization && normalizedGst.length !== 15) {
+      setRegisterError('GST must be exactly 15 characters.')
+      return
+    }
+
     if (existingOrganization && !existingOrganization.isLinked) {
       setIsLinkingExisting(true)
 
@@ -446,7 +454,7 @@ export default function OrganizationsClient() {
         body: JSON.stringify({
           name: organizationName,
           corporateEmail,
-          gst,
+          gst: normalizedGst,
           creditPeriod,
           paymentTerms,
           status: registerStatus,
@@ -888,11 +896,15 @@ export default function OrganizationsClient() {
                         <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">GST</label>
                         <input
                           value={gst}
-                          onChange={(event) => setGst(event.target.value)}
+                          onChange={(event) => setGst(event.target.value.toUpperCase().replace(/\s+/g, ''))}
+                          minLength={15}
+                          maxLength={15}
+                          required
                           disabled={Boolean(existingOrganization)}
                           className="w-full rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                           placeholder="27AAAAA0000A1Z5"
                         />
+                        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">GST must be exactly 15 characters.</p>
                       </div>
                       <div>
                         <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Status</label>
