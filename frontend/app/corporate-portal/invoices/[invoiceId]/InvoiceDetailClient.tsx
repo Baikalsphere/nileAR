@@ -107,6 +107,7 @@ export default function InvoiceDetailClient() {
   }
 
   const extraBillsTotal = invoice.bills.reduce((sum, bill) => sum + Number(bill.billAmount ?? 0), 0)
+  const roomCharges = Number(invoice.roomCharges ?? 0)
 
   const accessToken = corporateTokenStorage.get()
 
@@ -289,6 +290,10 @@ export default function InvoiceDetailClient() {
 
               <div className="p-5 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/20">
                 <div className="flex justify-between items-center mb-2">
+                  <span className="text-sm text-slate-500">Room Charges</span>
+                  <span className="text-base font-semibold text-slate-900 dark:text-white">{formatCurrency(roomCharges)}</span>
+                </div>
+                <div className="flex justify-between items-center mb-2">
                   <span className="text-sm text-slate-500">Extra Bills Total</span>
                   <span className="text-base font-semibold text-slate-900 dark:text-white">{formatCurrency(extraBillsTotal)}</span>
                 </div>
@@ -327,6 +332,18 @@ export default function InvoiceDetailClient() {
                 <div className="flex justify-between items-center">
                   <span className="text-text-sub-light dark:text-text-sub-dark">Room Type</span>
                   <span className="font-semibold text-text-main-light dark:text-text-main-dark">{invoice.roomType}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-text-sub-light dark:text-text-sub-dark">Nights</span>
+                  <span className="font-semibold text-text-main-light dark:text-text-main-dark">{invoice.nights}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-text-sub-light dark:text-text-sub-dark">Rate / Night</span>
+                  <span className="font-semibold text-text-main-light dark:text-text-main-dark">{formatCurrency(invoice.pricePerNight)}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-text-sub-light dark:text-text-sub-dark">Room Charges</span>
+                  <span className="font-semibold text-text-main-light dark:text-text-main-dark">{formatCurrency(roomCharges)}</span>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-text-sub-light dark:text-text-sub-dark">Stay Period</span>

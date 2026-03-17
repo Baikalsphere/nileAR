@@ -562,10 +562,13 @@ export default function BookingsClient() {
                               <td className="px-4 py-3">
                                 <div className="flex gap-2 flex-wrap">
                                   {booking.invoiceId ? (
-                                    <div className="flex items-center gap-2 px-3 py-2 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 rounded-lg text-sm font-semibold">
-                                      <span className="material-symbols-outlined text-[18px]">check_circle</span>
+                                    <Link
+                                      href={`/hotel-finance/bookings/${booking.id}/invoice`}
+                                      className="flex items-center gap-2 px-3 py-2 bg-emerald-100 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:hover:bg-emerald-900/50 text-emerald-700 dark:text-emerald-400 rounded-lg text-sm font-semibold transition-all duration-200"
+                                    >
+                                      <span className="material-symbols-outlined text-[18px]">visibility</span>
                                       <span>Invoice Sent</span>
-                                    </div>
+                                    </Link>
                                   ) : (
                                     <>
                                       <Link

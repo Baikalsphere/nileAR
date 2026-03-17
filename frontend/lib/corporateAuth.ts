@@ -121,6 +121,9 @@ export interface CorporateInvoiceDetail {
   roomType: string;
   checkInDate: string;
   checkOutDate: string;
+  nights: number;
+  pricePerNight: number;
+  roomCharges: number;
   employeeName: string;
   employeeCode: string;
   propertyName: string | null;

@@ -1048,10 +1048,14 @@ router.get("/:bookingId", async (req, res, next) => {
               b.check_in_date, b.check_out_date, b.nights, b.price_per_night,
               b.total_price, b.gst_applicable, b.status, b.invoice_id, b.sent_at,
               o.name AS organization_name, o.contact_email,
-              e.full_name AS employee_name, e.email AS employee_code
+              e.full_name AS employee_name, e.email AS employee_code,
+              i.invoice_number,
+              i.invoice_date,
+              i.due_date
        FROM hotel_bookings b
        JOIN organizations o ON o.id = b.organization_id
        JOIN portal_users e ON e.id = b.employee_id
+       LEFT JOIN corporate_invoices i ON i.id = b.invoice_id
        WHERE b.id = $1
          AND b.created_by = $2`,
       [bookingId, userId]
@@ -1081,6 +1085,9 @@ router.get("/:bookingId", async (req, res, next) => {
         gstApplicable: Boolean(row.gst_applicable),
         status: row.status,
         invoiceId: row.invoice_id,
+        invoiceNumber: row.invoice_number,
+        invoiceDate: row.invoice_date,
+        invoiceDueDate: row.due_date,
         sentAt: row.sent_at
       }
     });

@@ -187,6 +187,13 @@ export default function SendClient({ bookingId }: { bookingId: string }) {
                 <span className="material-symbols-outlined text-[18px]">arrow_back</span>
                 Back to Bookings
               </button>
+              <button
+                onClick={() => router.push(`/hotel-finance/bookings/${bookingId}/invoice`)}
+                className="mt-3 inline-flex items-center gap-2 px-6 py-3 border border-slate-300 dark:border-slate-600 rounded-xl font-semibold text-text-main-light dark:text-text-main-dark hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+              >
+                <span className="material-symbols-outlined text-[18px]">visibility</span>
+                Preview Sent Invoice
+              </button>
             </div>
           </div>
         </main>
