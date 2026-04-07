@@ -220,7 +220,8 @@ CREATE TABLE IF NOT EXISTS hotel_bookings (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   booking_number text UNIQUE NOT NULL,
   organization_id text NOT NULL REFERENCES organizations(id) ON DELETE RESTRICT,
-  employee_id uuid NOT NULL REFERENCES portal_users(id) ON DELETE RESTRICT,
+  employee_id uuid REFERENCES portal_users(id) ON DELETE RESTRICT,
+  guest_name text,
   room_type text NOT NULL,
   check_in_date date NOT NULL,
   check_out_date date NOT NULL,
@@ -362,6 +363,28 @@ BEGIN
     ALTER TABLE hotel_bookings
       ADD CONSTRAINT hotel_bookings_invoice_fk
       FOREIGN KEY (invoice_id) REFERENCES corporate_invoices(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  -- Make employee_id nullable to support manual guest name entry
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'hotel_bookings'
+      AND column_name = 'employee_id'
+      AND is_nullable = 'NO'
+  ) THEN
+    ALTER TABLE hotel_bookings ALTER COLUMN employee_id DROP NOT NULL;
+  END IF;
+
+  -- Add guest_name column for manually entered check-in names
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'hotel_bookings'
+      AND column_name = 'guest_name'
+  ) THEN
+    ALTER TABLE hotel_bookings ADD COLUMN guest_name text;
   END IF;
 END $$;
 

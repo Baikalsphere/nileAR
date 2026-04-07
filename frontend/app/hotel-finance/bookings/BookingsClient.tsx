@@ -42,13 +42,19 @@ export default function BookingsClient() {
   const [hotelLogoUrl, setHotelLogoUrl] = useState<string | null>(null)
   const [isHotelLogoFailed, setIsHotelLogoFailed] = useState(false)
   const [pendingRequestsCount, setPendingRequestsCount] = useState(0)
+  const [guestInputMode, setGuestInputMode] = useState<'employee' | 'manual'>('employee')
+  const [hasContract, setHasContract] = useState<boolean | null>(null)
+  const [roomPricingMode, setRoomPricingMode] = useState<'contract' | 'manual'>('contract')
   const [formData, setFormData] = useState({
     bookingNumber: `BK-${Math.floor(100 + Math.random() * 900)}`,
     organizationId: '',
     employeeId: '',
+    guestName: '',
     checkInDate: '',
     checkOutDate: '',
     roomType: '',
+    manualRoomType: '',
+    manualPricePerNight: '',
     gstApplicable: false,
   })
 
@@ -132,6 +138,8 @@ export default function BookingsClient() {
     if (!formData.organizationId) {
       setEmployees([])
       setContractRoomTypes([])
+      setHasContract(null)
+      setRoomPricingMode('contract')
       return
     }
 
@@ -144,9 +152,12 @@ export default function BookingsClient() {
 
         setEmployees(employeeResponse.employees)
         setContractRoomTypes(roomTypeResponse.roomTypes)
+        setHasContract(roomTypeResponse.hasContract)
+        setRoomPricingMode(roomTypeResponse.hasContract ? 'contract' : 'manual')
       } catch (metaError) {
         setEmployees([])
         setContractRoomTypes([])
+        setHasContract(null)
         setError(metaError instanceof Error ? metaError.message : 'Failed to load organization booking terms')
       }
     }
@@ -184,25 +195,35 @@ export default function BookingsClient() {
     setIsSavingBooking(true)
     setError(null)
     try {
+      const isManualPricing = roomPricingMode === 'manual'
       await createBooking({
         bookingNumber: formData.bookingNumber,
         organizationId: formData.organizationId,
-        employeeId: formData.employeeId,
+        ...(guestInputMode === 'employee'
+          ? { employeeId: formData.employeeId }
+          : { guestName: formData.guestName }),
+        roomType: isManualPricing ? formData.manualRoomType : formData.roomType,
+        ...(isManualPricing ? { manualPricePerNight: Number(formData.manualPricePerNight) } : {}),
         checkInDate: formData.checkInDate,
         checkOutDate: formData.checkOutDate,
-        roomType: formData.roomType,
         gstApplicable: formData.gstApplicable,
         status: 'pending'
       })
 
       setShowAddBookingModal(false)
+      setGuestInputMode('employee')
+      setRoomPricingMode('contract')
+      setHasContract(null)
       setFormData({
         bookingNumber: `BK-${Math.floor(100 + Math.random() * 900)}`,
         organizationId: '',
         employeeId: '',
+        guestName: '',
         checkInDate: '',
         checkOutDate: '',
         roomType: '',
+        manualRoomType: '',
+        manualPricePerNight: '',
         gstApplicable: false,
       })
       await loadBookings()
@@ -634,7 +655,7 @@ export default function BookingsClient() {
                 <p className="mt-1 text-sm text-text-sub-light dark:text-text-sub-dark">Capture booking details and derive pricing from contract terms.</p>
               </div>
               <button
-                onClick={() => setShowAddBookingModal(false)}
+                onClick={() => { setShowAddBookingModal(false); setGuestInputMode('employee'); setRoomPricingMode('contract'); setHasContract(null) }}
                 className="rounded-lg p-1 text-text-sub-light transition-colors hover:bg-slate-100 hover:text-text-main-light dark:text-text-sub-dark dark:hover:bg-slate-800 dark:hover:text-text-main-dark"
               >
                 <span className="material-symbols-outlined text-[24px]">close</span>
@@ -688,27 +709,61 @@ export default function BookingsClient() {
               </section>
 
               <section className="rounded-xl border border-slate-200 bg-white/80 p-4 dark:border-slate-700 dark:bg-slate-900/35">
-                <div className="mb-3 flex items-center gap-2">
-                  <span className="material-symbols-outlined text-[18px] text-primary">person</span>
-                  <p className="text-sm font-bold text-text-main-light dark:text-text-main-dark">Guest Details</p>
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="material-symbols-outlined text-[18px] text-primary">person</span>
+                    <p className="text-sm font-bold text-text-main-light dark:text-text-main-dark">Guest Details</p>
+                  </div>
+                  <div className="flex items-center gap-1 rounded-lg border border-slate-200 p-0.5 text-xs dark:border-slate-700">
+                    <button
+                      type="button"
+                      onClick={() => setGuestInputMode('employee')}
+                      className={`rounded-md px-2.5 py-1 font-medium transition-all ${guestInputMode === 'employee' ? 'bg-primary text-white' : 'text-text-main-light hover:bg-slate-100 dark:text-text-main-dark dark:hover:bg-slate-700'}`}
+                    >
+                      Select employee
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setGuestInputMode('manual')}
+                      className={`rounded-md px-2.5 py-1 font-medium transition-all ${guestInputMode === 'manual' ? 'bg-primary text-white' : 'text-text-main-light hover:bg-slate-100 dark:text-text-main-dark dark:hover:bg-slate-700'}`}
+                    >
+                      Enter manually
+                    </button>
+                  </div>
                 </div>
-                <div>
-                  <label className="mb-2 block text-sm font-semibold text-text-main-light dark:text-text-main-dark">
-                    Employee *
-                  </label>
-                  <select
-                    required
-                    value={formData.employeeId}
-                    onChange={(e) => setFormData({ ...formData, employeeId: e.target.value })}
-                    className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-text-main-light transition-all focus:border-transparent focus:ring-2 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-text-main-dark"
-                    disabled={!formData.organizationId}
-                  >
-                    <option value="">Select employee</option>
-                    {employees.map((employee) => (
-                      <option key={employee.id} value={employee.id}>{employee.fullName} ({employee.employeeCode})</option>
-                    ))}
-                  </select>
-                </div>
+                {guestInputMode === 'employee' ? (
+                  <div>
+                    <label className="mb-2 block text-sm font-semibold text-text-main-light dark:text-text-main-dark">
+                      Employee *
+                    </label>
+                    <select
+                      required={guestInputMode === 'employee'}
+                      value={formData.employeeId}
+                      onChange={(e) => setFormData({ ...formData, employeeId: e.target.value })}
+                      className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-text-main-light transition-all focus:border-transparent focus:ring-2 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-text-main-dark"
+                      disabled={!formData.organizationId}
+                    >
+                      <option value="">Select employee</option>
+                      {employees.map((employee) => (
+                        <option key={employee.id} value={employee.id}>{employee.fullName} ({employee.employeeCode})</option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="mb-2 block text-sm font-semibold text-text-main-light dark:text-text-main-dark">
+                      Guest Name *
+                    </label>
+                    <input
+                      type="text"
+                      required={guestInputMode === 'manual'}
+                      value={formData.guestName}
+                      onChange={(e) => setFormData({ ...formData, guestName: e.target.value })}
+                      placeholder="Enter guest name"
+                      className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-text-main-light transition-all focus:border-transparent focus:ring-2 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-text-main-dark"
+                    />
+                  </div>
+                )}
               </section>
 
               <section className="rounded-xl border border-slate-200 bg-white/80 p-4 dark:border-slate-700 dark:bg-slate-900/35">
@@ -745,43 +800,101 @@ export default function BookingsClient() {
               </section>
 
               <section className="rounded-xl border border-slate-200 bg-white/80 p-4 dark:border-slate-700 dark:bg-slate-900/35">
-                <div className="mb-3 flex items-center gap-2">
-                  <span className="material-symbols-outlined text-[18px] text-primary">hotel</span>
-                  <p className="text-sm font-bold text-text-main-light dark:text-text-main-dark">Room & Pricing</p>
-                </div>
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                  <div>
-                    <label className="mb-2 block text-sm font-semibold text-text-main-light dark:text-text-main-dark">
-                      Room Type *
-                    </label>
-                    <select
-                      required
-                      value={formData.roomType}
-                      onChange={(e) => setFormData({ ...formData, roomType: e.target.value })}
-                      className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-text-main-light transition-all focus:border-transparent focus:ring-2 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-text-main-dark"
-                      disabled={!formData.organizationId || contractRoomTypes.length === 0}
-                    >
-                      <option value="">Select Room Type</option>
-                      {contractRoomTypes.map((roomType) => (
-                        <option key={roomType.roomType} value={roomType.roomType}>
-                          {roomType.roomType}
-                        </option>
-                      ))}
-                    </select>
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="material-symbols-outlined text-[18px] text-primary">hotel</span>
+                    <p className="text-sm font-bold text-text-main-light dark:text-text-main-dark">Room & Pricing</p>
                   </div>
-                  <div>
-                    <label className="mb-2 block text-sm font-semibold text-text-main-light dark:text-text-main-dark">
-                      Price Per Night (Derived from Contract)
-                    </label>
-                    <div className="flex min-h-[42px] items-center rounded-lg border border-slate-200 bg-slate-100 px-4 py-2.5 text-text-main-light dark:border-slate-700 dark:bg-slate-800/70 dark:text-text-main-dark">
-                      {selectedRoomTypeDetails ? `₹${selectedRoomTypeDetails.nightlyRate.toLocaleString()}` : 'Select a room type'}
+                  {hasContract && (
+                    <div className="flex items-center gap-1 rounded-lg border border-slate-200 p-0.5 text-xs dark:border-slate-700">
+                      <button
+                        type="button"
+                        onClick={() => setRoomPricingMode('contract')}
+                        className={`rounded-md px-2.5 py-1 font-medium transition-all ${roomPricingMode === 'contract' ? 'bg-primary text-white' : 'text-text-main-light hover:bg-slate-100 dark:text-text-main-dark dark:hover:bg-slate-700'}`}
+                      >
+                        From contract
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRoomPricingMode('manual')}
+                        className={`rounded-md px-2.5 py-1 font-medium transition-all ${roomPricingMode === 'manual' ? 'bg-primary text-white' : 'text-text-main-light hover:bg-slate-100 dark:text-text-main-dark dark:hover:bg-slate-700'}`}
+                      >
+                        Enter manually
+                      </button>
                     </div>
-                  </div>
+                  )}
+                  {hasContract === false && (
+                    <span className="rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">No signed contract</span>
+                  )}
                 </div>
 
-                {selectedRoomTypeDetails?.inclusions && (
-                  <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-700 dark:border-blue-900/40 dark:bg-blue-900/20 dark:text-blue-300">
-                    <span className="font-semibold">Contract Inclusions:</span> {selectedRoomTypeDetails.inclusions}
+                {roomPricingMode === 'contract' && hasContract ? (
+                  <>
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                      <div>
+                        <label className="mb-2 block text-sm font-semibold text-text-main-light dark:text-text-main-dark">
+                          Room Type *
+                        </label>
+                        <select
+                          required
+                          value={formData.roomType}
+                          onChange={(e) => setFormData({ ...formData, roomType: e.target.value })}
+                          className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-text-main-light transition-all focus:border-transparent focus:ring-2 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-text-main-dark"
+                          disabled={!formData.organizationId}
+                        >
+                          <option value="">Select Room Type</option>
+                          {contractRoomTypes.map((roomType) => (
+                            <option key={roomType.roomType} value={roomType.roomType}>
+                              {roomType.roomType}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="mb-2 block text-sm font-semibold text-text-main-light dark:text-text-main-dark">
+                          Price Per Night (From Contract)
+                        </label>
+                        <div className="flex min-h-[42px] items-center rounded-lg border border-slate-200 bg-slate-100 px-4 py-2.5 text-text-main-light dark:border-slate-700 dark:bg-slate-800/70 dark:text-text-main-dark">
+                          {selectedRoomTypeDetails ? `₹${selectedRoomTypeDetails.nightlyRate.toLocaleString()}` : 'Select a room type'}
+                        </div>
+                      </div>
+                    </div>
+                    {selectedRoomTypeDetails?.inclusions && (
+                      <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-700 dark:border-blue-900/40 dark:bg-blue-900/20 dark:text-blue-300">
+                        <span className="font-semibold">Contract Inclusions:</span> {selectedRoomTypeDetails.inclusions}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div>
+                      <label className="mb-2 block text-sm font-semibold text-text-main-light dark:text-text-main-dark">
+                        Room Type *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={formData.manualRoomType}
+                        onChange={(e) => setFormData({ ...formData, manualRoomType: e.target.value })}
+                        placeholder="e.g. Deluxe Double"
+                        className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-text-main-light transition-all focus:border-transparent focus:ring-2 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-text-main-dark"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-2 block text-sm font-semibold text-text-main-light dark:text-text-main-dark">
+                        Price Per Night (₹) *
+                      </label>
+                      <input
+                        type="number"
+                        required
+                        min="1"
+                        step="0.01"
+                        value={formData.manualPricePerNight}
+                        onChange={(e) => setFormData({ ...formData, manualPricePerNight: e.target.value })}
+                        placeholder="e.g. 3500"
+                        className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-text-main-light transition-all focus:border-transparent focus:ring-2 focus:ring-primary dark:border-slate-700 dark:bg-slate-800 dark:text-text-main-dark"
+                      />
+                    </div>
                   </div>
                 )}
 
@@ -800,7 +913,7 @@ export default function BookingsClient() {
               <div className="flex gap-3 border-t border-slate-200 pt-4 dark:border-slate-700">
                 <button
                   type="button"
-                  onClick={() => setShowAddBookingModal(false)}
+                  onClick={() => { setShowAddBookingModal(false); setGuestInputMode('employee'); setRoomPricingMode('contract'); setHasContract(null) }}
                   className="flex-1 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-text-main-light transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-text-main-dark dark:hover:bg-slate-700"
                 >
                   Cancel

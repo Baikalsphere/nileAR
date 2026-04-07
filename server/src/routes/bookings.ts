@@ -20,13 +20,18 @@ const router = Router();
 const createBookingSchema = z.object({
   bookingNumber: z.string().min(2).max(60),
   organizationId: z.string().min(2).max(40),
-  employeeId: z.string().uuid(),
+  employeeId: z.string().uuid().optional(),
+  guestName: z.string().min(1).max(200).optional(),
   roomType: z.string().min(2).max(120),
+  manualPricePerNight: z.number().positive().optional(),
   checkInDate: z.string().min(8).max(20),
   checkOutDate: z.string().min(8).max(20),
   gstApplicable: z.boolean().default(false),
   status: z.enum(["pending", "confirmed", "checked-in", "checked-out"]).default("pending")
-});
+}).refine(
+  (data) => data.employeeId || data.guestName,
+  { message: "Either employeeId or guestName must be provided" }
+);
 
 const bookingRequestDecisionSchema = z.object({
   action: z.enum(["accept", "reject"]),
@@ -269,9 +274,16 @@ const getLatestSignedContract = async (organizationId: string, hotelUserId: stri
 };
 
 const prepareBookingDetails = async (payload: z.infer<typeof createBookingSchema>, hotelUserId: string) => {
+  const nights = getDaysBetween(payload.checkInDate, payload.checkOutDate);
+
+  if (payload.manualPricePerNight !== undefined) {
+    const totalPrice = Number((nights * payload.manualPricePerNight).toFixed(2));
+    return { contractNightlyRate: payload.manualPricePerNight, nights, totalPrice };
+  }
+
   const contract = await getLatestSignedContract(payload.organizationId, hotelUserId);
   if (!contract) {
-    return { error: "Selected organization does not have a signed contract" };
+    return { error: "Selected organization does not have a signed contract. Please enter the room price manually." };
   }
 
   const roomRates = Array.isArray(contract.contract_data?.roomRates)
@@ -292,7 +304,6 @@ const prepareBookingDetails = async (payload: z.infer<typeof createBookingSchema
     return { error: "Selected room type has no valid rate in the signed contract" };
   }
 
-  const nights = getDaysBetween(payload.checkInDate, payload.checkOutDate);
   const totalPrice = Number((nights * contractNightlyRate).toFixed(2));
 
   return {
@@ -381,7 +392,7 @@ router.get("/meta/organizations/:organizationId/room-types", async (req, res, ne
     const contract = await getLatestSignedContract(organizationId, String(userId));
 
     if (!contract) {
-      return res.status(404).json({ error: { message: "No signed contract found for this organization" } });
+      return res.status(200).json({ hasContract: false, contractId: null, roomTypes: [] });
     }
 
     const roomRates = Array.isArray(contract.contract_data?.roomRates)
@@ -406,6 +417,7 @@ router.get("/meta/organizations/:organizationId/room-types", async (req, res, ne
       }));
 
     return res.status(200).json({
+      hasContract: true,
       contractId: contract.id,
       roomTypes
     });
@@ -684,7 +696,7 @@ router.get("/", async (req, res, next) => {
               b.check_in_date, b.check_out_date, b.nights, b.price_per_night,
               b.total_price, b.gst_applicable, b.status, b.invoice_id, b.sent_at,
               o.name AS organization_name,
-              e.full_name AS employee_name,
+              COALESCE(e.full_name, b.guest_name) AS employee_name,
               e.email AS employee_code,
               o.credit_period,
               i.invoice_number,
@@ -692,7 +704,7 @@ router.get("/", async (req, res, next) => {
               i.due_date
        FROM hotel_bookings b
        JOIN organizations o ON o.id = b.organization_id
-       JOIN portal_users e ON e.id = b.employee_id
+       LEFT JOIN portal_users e ON e.id = b.employee_id
        LEFT JOIN corporate_invoices i ON i.id = b.invoice_id
        WHERE ($1::text IS NULL OR b.status = $1)
          AND ($2::date IS NULL OR b.check_in_date >= $2::date)
@@ -751,6 +763,7 @@ router.post("/", async (req, res, next) => {
          booking_number,
          organization_id,
          employee_id,
+         guest_name,
          room_type,
          check_in_date,
          check_out_date,
@@ -761,14 +774,15 @@ router.post("/", async (req, res, next) => {
          status,
          created_by
        )
-       VALUES ($1, $2, $3, $4, $5::date, $6::date, $7, $8, $9, $10, $11, $12)
-       RETURNING id, booking_number, organization_id, employee_id, room_type,
+       VALUES ($1, $2, $3, $4, $5, $6::date, $7::date, $8, $9, $10, $11, $12, $13)
+       RETURNING id, booking_number, organization_id, employee_id, guest_name, room_type,
                  check_in_date, check_out_date, nights, price_per_night,
                  total_price, gst_applicable, status, created_at`,
       [
         payload.bookingNumber.trim().toUpperCase(),
         payload.organizationId,
-        payload.employeeId,
+        payload.employeeId ?? null,
+        payload.guestName?.trim() ?? null,
         payload.roomType.trim(),
         payload.checkInDate,
         payload.checkOutDate,
@@ -1048,13 +1062,14 @@ router.get("/:bookingId", async (req, res, next) => {
               b.check_in_date, b.check_out_date, b.nights, b.price_per_night,
               b.total_price, b.gst_applicable, b.status, b.invoice_id, b.sent_at,
               o.name AS organization_name, o.contact_email,
-              e.full_name AS employee_name, e.email AS employee_code,
+              COALESCE(e.full_name, b.guest_name) AS employee_name,
+              e.email AS employee_code,
               i.invoice_number,
               i.invoice_date,
               i.due_date
        FROM hotel_bookings b
        JOIN organizations o ON o.id = b.organization_id
-       JOIN portal_users e ON e.id = b.employee_id
+       LEFT JOIN portal_users e ON e.id = b.employee_id
        LEFT JOIN corporate_invoices i ON i.id = b.invoice_id
        WHERE b.id = $1
          AND b.created_by = $2`,

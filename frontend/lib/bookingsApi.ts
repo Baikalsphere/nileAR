@@ -253,7 +253,7 @@ export const fetchBookingEmployees = async (organizationId: string) => {
 }
 
 export const fetchBookingRoomTypes = async (organizationId: string) => {
-  return request<{ contractId: string; roomTypes: ContractRoomType[] }>(
+  return request<{ hasContract: boolean; contractId: string | null; roomTypes: ContractRoomType[] }>(
     `/api/bookings/meta/organizations/${organizationId}/room-types`,
     {
       method: "GET"
@@ -308,8 +308,10 @@ export const decideBookingRequest = async (
 export const createBooking = async (payload: {
   bookingNumber: string
   organizationId: string
-  employeeId: string
+  employeeId?: string
+  guestName?: string
   roomType: string
+  manualPricePerNight?: number
   checkInDate: string
   checkOutDate: string
   gstApplicable: boolean

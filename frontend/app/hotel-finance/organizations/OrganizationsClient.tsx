@@ -242,6 +242,7 @@ export default function OrganizationsClient() {
   const [editError, setEditError] = useState<string | null>(null)
   const [editSuccess, setEditSuccess] = useState<string | null>(null)
   const [isSavingEdit, setIsSavingEdit] = useState(false)
+  const [currentPage, setCurrentPage] = useState(1)
 
   const getAuthHeaders = () => {
     const token = tokenStorage.get()
@@ -360,11 +361,18 @@ export default function OrganizationsClient() {
     void loadOrganizations()
   }, [router])
 
-  const filteredOrganizations = useMemo(() => organizations.filter(org => {
-    const matchesSearch = org.name.toLowerCase().includes(searchQuery.toLowerCase())
-    const matchesStatus = !statusFilter || org.status === statusFilter
-    return matchesSearch && matchesStatus
-  }), [organizations, searchQuery, statusFilter])
+  const filteredOrganizations = useMemo(() => {
+    setCurrentPage(1)
+    return organizations.filter(org => {
+      const matchesSearch = org.name.toLowerCase().includes(searchQuery.toLowerCase())
+      const matchesStatus = !statusFilter || org.status === statusFilter
+      return matchesSearch && matchesStatus
+    })
+  }, [organizations, searchQuery, statusFilter])
+
+  const PAGE_SIZE = 10
+  const totalPages = Math.max(1, Math.ceil(filteredOrganizations.length / PAGE_SIZE))
+  const pagedOrganizations = filteredOrganizations.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
 
   const handleCreateOrganization = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -743,7 +751,7 @@ export default function OrganizationsClient() {
                       <tr>
                         <td colSpan={7} className="px-6 py-12 text-center text-sm text-slate-500 dark:text-slate-400">No organizations found</td>
                       </tr>
-                    ) : filteredOrganizations.map((org) => (
+                    ) : pagedOrganizations.map((org) => (
                       <tr key={org.id} className="group cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
                         <td className="px-6 py-4">
                           <Link href={`/hotel-finance/organizations/${org.id}`} className="flex items-center gap-3">
@@ -812,19 +820,58 @@ export default function OrganizationsClient() {
 
               {/* Pagination */}
               <div className="flex flex-col items-center justify-between gap-4 border-t border-slate-200 bg-white px-6 py-4 dark:border-slate-800 dark:bg-slate-900 sm:flex-row">
-                <span className="text-sm text-slate-500 dark:text-slate-400">Showing <span className="font-semibold text-slate-900 dark:text-white">1</span> to <span className="font-semibold text-slate-900 dark:text-white">{filteredOrganizations.length}</span> of <span className="font-semibold text-slate-900 dark:text-white">{organizations.length}</span> results</span>
+                <span className="text-sm text-slate-500 dark:text-slate-400">
+                  Showing{' '}
+                  <span className="font-semibold text-slate-900 dark:text-white">
+                    {filteredOrganizations.length === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1}
+                  </span>{' '}
+                  to{' '}
+                  <span className="font-semibold text-slate-900 dark:text-white">
+                    {Math.min(currentPage * PAGE_SIZE, filteredOrganizations.length)}
+                  </span>{' '}
+                  of{' '}
+                  <span className="font-semibold text-slate-900 dark:text-white">{filteredOrganizations.length}</span> results
+                </span>
                 <div className="flex items-center gap-1">
-                  <button className="flex size-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700">
+                  <button
+                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                    className="flex size-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
+                  >
                     <span className="material-symbols-outlined text-sm">chevron_left</span>
                   </button>
                   <div className="flex gap-1">
-                    <button className="flex size-9 items-center justify-center rounded-lg bg-primary text-sm font-medium text-white shadow-sm">1</button>
-                    <button className="flex size-9 items-center justify-center rounded-lg bg-transparent text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">2</button>
-                    <button className="flex size-9 items-center justify-center rounded-lg bg-transparent text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">3</button>
-                    <span className="flex size-9 items-center justify-center text-sm text-slate-400">...</span>
-                    <button className="flex size-9 items-center justify-center rounded-lg bg-transparent text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">10</button>
+                    {(() => {
+                      const pages: (number | 'ellipsis')[] = []
+                      if (totalPages <= 7) {
+                        for (let i = 1; i <= totalPages; i++) pages.push(i)
+                      } else {
+                        pages.push(1)
+                        if (currentPage > 3) pages.push('ellipsis')
+                        for (let i = Math.max(2, currentPage - 1); i <= Math.min(totalPages - 1, currentPage + 1); i++) pages.push(i)
+                        if (currentPage < totalPages - 2) pages.push('ellipsis')
+                        pages.push(totalPages)
+                      }
+                      return pages.map((p, i) =>
+                        p === 'ellipsis' ? (
+                          <span key={`e${i}`} className="flex size-9 items-center justify-center text-sm text-slate-400">…</span>
+                        ) : (
+                          <button
+                            key={p}
+                            onClick={() => setCurrentPage(p)}
+                            className={`flex size-9 items-center justify-center rounded-lg text-sm font-medium transition-colors ${p === currentPage ? 'bg-primary text-white shadow-sm' : 'bg-transparent text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'}`}
+                          >
+                            {p}
+                          </button>
+                        )
+                      )
+                    })()}
                   </div>
-                  <button className="flex size-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700">
+                  <button
+                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                    disabled={currentPage === totalPages}
+                    className="flex size-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
+                  >
                     <span className="material-symbols-outlined text-sm">chevron_right</span>
                   </button>
                 </div>
