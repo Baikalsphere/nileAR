@@ -1032,6 +1032,40 @@ router.post("/admin/hotel-accounts", async (req, res, next) => {
   }
 });
 
+router.get("/admin/hotel-activity", async (_req, res, next) => {
+  try {
+    const result = await query(
+      `SELECT
+         u.id,
+         u.email,
+         u.full_name,
+         u.is_active,
+         u.last_login_at,
+         u.created_at,
+         u.failed_login_attempts,
+         u.locked_until,
+         hp.hotel_name,
+         hp.location,
+         (
+           SELECT COUNT(*)::int
+           FROM refresh_tokens rt
+           WHERE rt.user_id = u.id
+             AND rt.revoked_at IS NULL
+             AND rt.expires_at > NOW()
+         ) AS active_sessions
+       FROM users u
+       LEFT JOIN hotel_profiles hp ON hp.user_id = u.id
+       WHERE u.role = 'hotel_finance_user'
+       ORDER BY u.last_login_at DESC NULLS LAST`,
+      []
+    );
+
+    return res.json({ accounts: result.rows });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.post("/login", authLimiter, async (req, res, next) => {
   try {
     const { email, password } = loginSchema.parse(req.body);

@@ -347,6 +347,26 @@ export const createHotelAccountBySecret = async (
   });
 };
 
+export interface HotelActivityAccount {
+  id: string;
+  email: string;
+  full_name: string | null;
+  is_active: boolean;
+  last_login_at: string | null;
+  created_at: string;
+  failed_login_attempts: number;
+  locked_until: string | null;
+  hotel_name: string | null;
+  location: string | null;
+  active_sessions: number;
+}
+
+export const fetchHotelActivity = async () => {
+  return request<{ accounts: HotelActivityAccount[] }>("/api/auth/admin/hotel-activity", {
+    method: "GET"
+  });
+};
+
 // ══════════════════════════════════════════════════════════════
 // Portal User Management
 // ══════════════════════════════════════════════════════════════
