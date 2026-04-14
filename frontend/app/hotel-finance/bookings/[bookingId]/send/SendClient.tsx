@@ -7,13 +7,13 @@ import { useRouter } from 'next/navigation'
 import { useState, useEffect } from 'react'
 import { loadAttachments, clearAttachments, type AttachedDocumentsMeta } from '../../data'
 import { BookingRecord, fetchBookingBills, fetchBookingById, sendBookingInvoice } from '@/lib/bookingsApi'
-import { tokenStorage } from '@/lib/auth'
+import { fetchHotelProfile, HotelProfile, tokenStorage } from '@/lib/auth'
 
 const billLabels: Record<string, { label: string; icon: string }> = {
   roomCharges: { label: 'Room Charges', icon: 'hotel' },
   foodBeverage: { label: 'Food & Restaurant', icon: 'restaurant' },
   barLounge: { label: 'Bar & Lounge', icon: 'local_bar' },
-  roomService: { label: 'Room Service', icon: 'room_service' },
+  roomService: { label: 'Room Charges', icon: 'hotel' },
   laundry: { label: 'Laundry & Dry Cleaning', icon: 'local_laundry_service' },
   spaWellness: { label: 'Spa & Wellness', icon: 'spa' },
   minibar: { label: 'Minibar', icon: 'kitchen' },
@@ -25,6 +25,7 @@ const billLabels: Record<string, { label: string; icon: string }> = {
 export default function SendClient({ bookingId }: { bookingId: string }) {
   const router = useRouter()
   const [booking, setBooking] = useState<BookingRecord | null>(null)
+  const [hotelProfile, setHotelProfile] = useState<HotelProfile | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [attachments, setAttachments] = useState<AttachedDocumentsMeta | null>(null)
@@ -48,11 +49,15 @@ export default function SendClient({ bookingId }: { bookingId: string }) {
       setIsLoading(true)
       setLoadError(null)
       try {
-        const response = await fetchBookingById(bookingId)
-        setBooking(response.booking)
-        setRecipientEmail(response.booking.organizationEmail ?? '')
+        const [bookingResponse, profileResponse, billsResponse] = await Promise.all([
+          fetchBookingById(bookingId),
+          fetchHotelProfile(),
+          fetchBookingBills(bookingId),
+        ])
+        setBooking(bookingResponse.booking)
+        setHotelProfile(profileResponse.profile)
+        setRecipientEmail(bookingResponse.booking.organizationEmail ?? '')
 
-        const billsResponse = await fetchBookingBills(bookingId)
         const extras = billsResponse.bills.reduce((sum, bill) => sum + Number(bill.billAmount ?? 0), 0)
         setExtraBillsTotal(extras)
         setUploadedBillCount(billsResponse.bills.length)
@@ -361,18 +366,34 @@ export default function SendClient({ bookingId }: { bookingId: string }) {
                     {/* Hotel Letterhead */}
                     <div className="flex items-start justify-between mb-6 pb-6 border-b-2 border-blue-600">
                       <div className="flex items-center gap-3">
-                        <div className="w-12 h-12 bg-blue-600 rounded-xl flex items-center justify-center">
-                          <span className="material-symbols-outlined text-[28px] text-white">domain</span>
-                        </div>
+                        {hotelProfile?.logoUrl ? (
+                          <img src={hotelProfile.logoUrl} alt="Hotel logo" className="w-12 h-12 rounded-xl object-cover" />
+                        ) : (
+                          <div className="w-12 h-12 bg-blue-600 rounded-xl flex items-center justify-center">
+                            <span className="material-symbols-outlined text-[28px] text-white">domain</span>
+                          </div>
+                        )}
                         <div>
-                          <h2 className="text-lg font-extrabold text-blue-700 dark:text-blue-400">Grand Hotel &amp; Resorts</h2>
-                          <p className="text-[11px] text-text-sub-light dark:text-text-sub-dark">123 Hospitality Avenue, Mumbai 400001, Maharashtra, India</p>
-                          <p className="text-[11px] text-text-sub-light dark:text-text-sub-dark">Tel: +91 22 1234 5678 | Email: finance@grandhotel.com</p>
+                          <h2 className="text-lg font-extrabold text-blue-700 dark:text-blue-400">
+                            {hotelProfile?.hotelName ?? '—'}
+                          </h2>
+                          {(hotelProfile?.address || hotelProfile?.location) && (
+                            <p className="text-[11px] text-text-sub-light dark:text-text-sub-dark">
+                              {hotelProfile.address ?? hotelProfile.location}
+                            </p>
+                          )}
+                          <p className="text-[11px] text-text-sub-light dark:text-text-sub-dark">
+                            {[
+                              hotelProfile?.contactPhone ? `Tel: ${hotelProfile.contactPhone}` : null,
+                              hotelProfile?.contactEmail ? `Email: ${hotelProfile.contactEmail}` : null,
+                            ].filter(Boolean).join(' | ')}
+                          </p>
                         </div>
                       </div>
                       <div className="text-right">
-                        <p className="text-xs text-text-sub-light dark:text-text-sub-dark">GSTIN: 27AABCG1234F1ZH</p>
-                        <p className="text-xs text-text-sub-light dark:text-text-sub-dark">PAN: AABCG1234F</p>
+                        {hotelProfile?.gst && (
+                          <p className="text-xs text-text-sub-light dark:text-text-sub-dark">GSTIN: {hotelProfile.gst}</p>
+                        )}
                       </div>
                     </div>
 
@@ -409,7 +430,7 @@ export default function SendClient({ bookingId }: { bookingId: string }) {
                     <div className="space-y-4 text-sm text-text-main-light dark:text-text-main-dark leading-relaxed">
                       <p>Dear Sir / Madam,</p>
 
-                      <p>Greetings from Grand Hotel &amp; Resorts.</p>
+                      <p>Greetings from {hotelProfile?.hotelName ?? 'our hotel'}.</p>
 
                       <p>
                         Please find enclosed herewith the Statement of Accounts along with supporting service bills for your reference,
@@ -501,32 +522,9 @@ export default function SendClient({ bookingId }: { bookingId: string }) {
                         <p className="text-xs font-bold text-text-sub-light dark:text-text-sub-dark uppercase tracking-wider mb-3">
                           Bank Details for Wire Transfer
                         </p>
-                        <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
-                          <div>
-                            <span className="text-text-sub-light dark:text-text-sub-dark">Account Name</span>
-                            <p className="font-semibold text-text-main-light dark:text-text-main-dark">Grand Hotel &amp; Resorts Pvt Ltd</p>
-                          </div>
-                          <div>
-                            <span className="text-text-sub-light dark:text-text-sub-dark">Bank Name</span>
-                            <p className="font-semibold text-text-main-light dark:text-text-main-dark">HDFC Bank</p>
-                          </div>
-                          <div>
-                            <span className="text-text-sub-light dark:text-text-sub-dark">Account No.</span>
-                            <p className="font-semibold text-text-main-light dark:text-text-main-dark">5020 0012 3456 789</p>
-                          </div>
-                          <div>
-                            <span className="text-text-sub-light dark:text-text-sub-dark">IFSC Code</span>
-                            <p className="font-semibold text-text-main-light dark:text-text-main-dark">HDFC0001234</p>
-                          </div>
-                          <div>
-                            <span className="text-text-sub-light dark:text-text-sub-dark">Branch</span>
-                            <p className="font-semibold text-text-main-light dark:text-text-main-dark">Fort, Mumbai</p>
-                          </div>
-                          <div>
-                            <span className="text-text-sub-light dark:text-text-sub-dark">SWIFT Code</span>
-                            <p className="font-semibold text-text-main-light dark:text-text-main-dark">HDFCINBB</p>
-                          </div>
-                        </div>
+                        <p className="text-xs text-text-sub-light dark:text-text-sub-dark italic">
+                          Please contact {hotelProfile?.contactEmail ?? 'the hotel finance team'} to obtain bank account details for payment.
+                        </p>
                       </div>
 
                       {/* Signature & Stamp Area */}
@@ -538,7 +536,7 @@ export default function SendClient({ bookingId }: { bookingId: string }) {
                             <div className="w-40 h-16 border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-lg flex items-center justify-center">
                               <span className="text-[10px] text-slate-400 uppercase tracking-wider">Authorized Signatory</span>
                             </div>
-                            <p className="text-sm font-bold mt-2">For Grand Hotel &amp; Resorts</p>
+                            <p className="text-sm font-bold mt-2">For {hotelProfile?.entityName ?? hotelProfile?.hotelName ?? 'Hotel'}</p>
                             <p className="text-xs text-text-sub-light dark:text-text-sub-dark">Finance Department</p>
                           </div>
                           <div className="text-right">

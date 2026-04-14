@@ -22,7 +22,7 @@ interface Charge {
 const BILL_KEY_MAP: Record<string, keyof AttachedDocumentsMeta> = {
   'Laundry Service': 'laundry',
   'Food & Beverage': 'foodBeverage',
-  'Room Service': 'roomService',
+  'Room Charges': 'roomService',
   'Bar & Lounge': 'barLounge',
   'Spa & Wellness': 'spaWellness',
   Minibar: 'minibar',
@@ -36,7 +36,7 @@ const BILL_KEY_MAP: Record<string, keyof AttachedDocumentsMeta> = {
 const SERVICE_TYPES = [
   'Laundry Service',
   'Food & Beverage',
-  'Room Service',
+  'Room Charges',
   'Bar & Lounge',
   'Spa & Wellness',
   'Minibar',
