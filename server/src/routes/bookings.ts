@@ -1290,13 +1290,13 @@ router.post("/:bookingId/send", async (req, res, next) => {
               b.check_in_date, b.check_out_date, b.nights, b.total_price,
               b.invoice_id, b.sent_at,
               o.name AS organization_name, o.contact_email, o.credit_period,
-              e.full_name AS employee_name, e.email AS employee_code,
+              COALESCE(e.full_name, b.guest_name) AS employee_name, e.email AS employee_code,
               hp.hotel_name,
               hp.location AS hotel_location,
               hp.logo_url AS hotel_logo_url
        FROM hotel_bookings b
        JOIN organizations o ON o.id = b.organization_id
-       JOIN portal_users e ON e.id = b.employee_id
+       LEFT JOIN portal_users e ON e.id = b.employee_id
        LEFT JOIN hotel_profiles hp ON hp.user_id::text = b.created_by
        WHERE b.id = $1
          AND b.created_by = $2
