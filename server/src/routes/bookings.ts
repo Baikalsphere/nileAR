@@ -1149,7 +1149,37 @@ router.get("/:bookingId/bills", async (req, res, next) => {
       [bookingId, userId]
     );
 
-    const bills = result.rows.map((row) => ({
+    // Deduplicate by (bill_category, file_name, bill_amount) — keep latest, delete the rest
+    const byKey = new Map<string, typeof result.rows>();
+    for (const row of result.rows) {
+      const key = `${row.bill_category}||${row.file_name ?? ""}||${row.bill_amount}`;
+      if (!byKey.has(key)) byKey.set(key, []);
+      byKey.get(key)!.push(row);
+    }
+
+    const kept: typeof result.rows = [];
+    const toDelete: typeof result.rows = [];
+    for (const rows of byKey.values()) {
+      rows.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      kept.push(rows[0]);
+      toDelete.push(...rows.slice(1));
+    }
+
+    if (toDelete.length > 0) {
+      for (const dup of toDelete) {
+        if (dup.storage_provider === "supabase") {
+          await deleteBillFromSupabase(dup.cloud_public_id).catch(() => undefined);
+        } else if (dup.storage_provider === "cloudinary") {
+          await deleteBillFileFromCloudinary(dup.cloud_public_id).catch(() => undefined);
+        }
+        if (dup.storage_path && fs.existsSync(dup.storage_path)) {
+          fs.unlinkSync(dup.storage_path);
+        }
+      }
+      await query(`DELETE FROM booking_bills WHERE id = ANY($1)`, [toDelete.map((r) => r.id)]);
+    }
+
+    const bills = kept.map((row) => ({
       id: row.id,
       bookingId,
       billCategory: row.bill_category,
@@ -1190,6 +1220,33 @@ router.post("/:bookingId/bills", billUpload.single("file"), async (req, res, nex
 
     let objectPath: string | null = null;
     let cloudUrl: string | null = null;
+
+    // Delete any existing bill with the same category + filename for this booking (prevent duplicates)
+    const incomingFileName = uploadedFile
+      ? uploadedFile.originalname.trim()
+      : (normalizeOptional(payload.fileName) ?? null);
+
+    const existingDups = await query(
+      `SELECT id, storage_path, cloud_public_id, storage_provider
+       FROM booking_bills
+       WHERE booking_id = $1
+         AND bill_category = $2
+         AND COALESCE(file_name, '') = COALESCE($3, '')`,
+      [bookingId, payload.billCategory.trim(), incomingFileName]
+    );
+    for (const dup of existingDups.rows) {
+      if (dup.storage_provider === "supabase") {
+        await deleteBillFromSupabase(dup.cloud_public_id).catch(() => undefined);
+      } else if (dup.storage_provider === "cloudinary") {
+        await deleteBillFileFromCloudinary(dup.cloud_public_id).catch(() => undefined);
+      }
+      if (dup.storage_path && fs.existsSync(dup.storage_path)) {
+        fs.unlinkSync(dup.storage_path);
+      }
+    }
+    if (existingDups.rows.length > 0) {
+      await query(`DELETE FROM booking_bills WHERE id = ANY($1)`, [existingDups.rows.map((r) => r.id)]);
+    }
 
     if (uploadedFile) {
       if (!isSupabaseStorageConfigured()) {

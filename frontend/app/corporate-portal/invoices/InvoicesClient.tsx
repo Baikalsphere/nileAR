@@ -46,9 +46,15 @@ export default function InvoicesClient() {
     void loadInvoices()
   }, [router])
 
+  const formatCurrency = (value: number) =>
+    new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(value)
+
+  const formatDate = (value: string | Date) =>
+    new Date(value).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+
   const filteredInvoices = invoicesData.filter(invoice => {
     const matchesSearch = invoice.invoiceNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         invoice.employeeName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                         (invoice.employeeName ?? '').toLowerCase().includes(searchQuery.toLowerCase()) ||
                          (invoice.senderHotelName ?? '').toLowerCase().includes(searchQuery.toLowerCase())
     const matchesStatus = !statusFilter || invoice.status === statusFilter
     return matchesSearch && matchesStatus
@@ -241,17 +247,21 @@ export default function InvoicesClient() {
                           <span className="font-bold text-primary text-sm tabular-nums whitespace-nowrap">#{invoice.invoiceNumber}</span>
                         </td>
                         <td className="py-3 px-3">
-                          <span className="text-sm font-medium text-slate-900 dark:text-white whitespace-nowrap">{invoice.employeeName}</span>
+                          <span className="text-sm font-medium text-slate-900 dark:text-white whitespace-nowrap">
+                            {invoice.employeeName ?? <span className="italic text-slate-400">—</span>}
+                          </span>
                         </td>
                         <td className="py-3 px-3">
                           <span className="text-sm text-slate-600 dark:text-gray-300 whitespace-nowrap">{invoice.senderHotelName ?? invoice.propertyName ?? 'Hotel Stay'}</span>
                         </td>
-                        <td className="py-3 px-3 text-sm text-slate-500 dark:text-gray-400 tabular-nums whitespace-nowrap">{new Date(invoice.invoiceDate).toLocaleDateString()}</td>
+                        <td className="py-3 px-3 text-sm text-slate-500 dark:text-gray-400 tabular-nums whitespace-nowrap">{formatDate(invoice.invoiceDate)}</td>
                         <td className="py-3 px-3 text-sm tabular-nums whitespace-nowrap">
-                          {invoice.status === 'overdue' ? <span className="font-medium text-red-600 dark:text-red-400">{new Date(invoice.dueDate).toLocaleDateString()}</span> : <span className="text-slate-600 dark:text-gray-300">{new Date(invoice.dueDate).toLocaleDateString()}</span>}
+                          {invoice.status === 'overdue'
+                            ? <span className="font-medium text-red-600 dark:text-red-400">{formatDate(invoice.dueDate)}</span>
+                            : <span className="text-slate-600 dark:text-gray-300">{formatDate(invoice.dueDate)}</span>}
                         </td>
                         <td className="py-3 px-3 text-sm font-bold text-slate-900 dark:text-white text-right tabular-nums whitespace-nowrap">
-                          ₹{invoice.amount.toFixed(2)}
+                          {formatCurrency(invoice.amount)}
                         </td>
                         <td className="py-3 px-3 text-center">
                           <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold whitespace-nowrap ${getStatusBadge(invoice.status)}`}>
