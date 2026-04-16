@@ -529,12 +529,14 @@ router.get("/dashboard/summary", async (req, res, next) => {
   try {
     const userId = req.user?.id;
 
-    // Fetch all bookings for this hotel, including extra bill amounts
+    // Fetch all bookings for this hotel, including extra bill amounts and invoice status
     const result = await query(
       `SELECT b.id,
               b.total_price + COALESCE(bills.bills_total, 0) AS total_price,
               b.status, b.check_in_date, b.check_out_date,
-              b.created_at, o.name AS organization_name
+              b.created_at, o.name AS organization_name,
+              i.status AS invoice_status,
+              i.amount AS invoice_amount
        FROM hotel_bookings b
        JOIN organizations o ON o.id = b.organization_id
        LEFT JOIN (
@@ -542,6 +544,7 @@ router.get("/dashboard/summary", async (req, res, next) => {
          FROM booking_bills
          GROUP BY booking_id
        ) bills ON bills.booking_id = b.id
+       LEFT JOIN corporate_invoices i ON i.booking_id = b.id
        WHERE b.created_by = $1`,
       [userId]
     );
@@ -555,6 +558,8 @@ router.get("/dashboard/summary", async (req, res, next) => {
       const isActive = ["pending", "confirmed", "checked-in"].includes(status);
       const isCompleted = status === "checked-out";
       const isCancelled = status === "cancelled";
+      const isPaid = String(row.invoice_status ?? "").toLowerCase() === "paid";
+      const paidAmount = Number(row.invoice_amount ?? 0);
 
       return {
         totalPrice,
@@ -564,7 +569,9 @@ router.get("/dashboard/summary", async (req, res, next) => {
         organizationName,
         isActive,
         isCompleted,
-        isCancelled
+        isCancelled,
+        isPaid,
+        paidAmount
       };
     });
 
@@ -584,10 +591,10 @@ router.get("/dashboard/summary", async (req, res, next) => {
       .filter((b) => !b.isCancelled)
       .reduce((sum, b) => sum + b.totalPrice, 0);
 
-    // Collected = completed (checked-out) bookings
+    // Collected = bookings whose invoice has been paid
     const totalCollected = bookings
-      .filter((b) => b.isCompleted)
-      .reduce((sum, b) => sum + b.totalPrice, 0);
+      .filter((b) => b.isPaid)
+      .reduce((sum, b) => sum + b.paidAmount, 0);
 
     // Pending = active bookings (pending, confirmed, checked-in)
     const totalPending = bookings
