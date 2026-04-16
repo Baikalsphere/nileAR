@@ -529,12 +529,19 @@ router.get("/dashboard/summary", async (req, res, next) => {
   try {
     const userId = req.user?.id;
 
-    // Fetch all bookings for this hotel
+    // Fetch all bookings for this hotel, including extra bill amounts
     const result = await query(
-      `SELECT b.id, b.total_price, b.status, b.check_in_date, b.check_out_date,
+      `SELECT b.id,
+              b.total_price + COALESCE(bills.bills_total, 0) AS total_price,
+              b.status, b.check_in_date, b.check_out_date,
               b.created_at, o.name AS organization_name
        FROM hotel_bookings b
        JOIN organizations o ON o.id = b.organization_id
+       LEFT JOIN (
+         SELECT booking_id, SUM(bill_amount) AS bills_total
+         FROM booking_bills
+         GROUP BY booking_id
+       ) bills ON bills.booking_id = b.id
        WHERE b.created_by = $1`,
       [userId]
     );

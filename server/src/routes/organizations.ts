@@ -1166,7 +1166,14 @@ router.get("/", async (req: Request, res: Response, next: NextFunction) => {
               o.initial_outstanding,
               c.status AS contract_status,
               COALESCE(SUM(CASE WHEN i.status = 'paid' THEN i.amount ELSE 0 END), 0) AS amount_received,
-              COALESCE(o.initial_outstanding, 0) + COALESCE(SUM(CASE WHEN i.status IN ('unpaid', 'overdue') THEN i.amount ELSE 0 END), 0) AS outstanding_amount
+              COALESCE(o.initial_outstanding, 0) + COALESCE(SUM(
+                CASE
+                  WHEN i.status IN ('unpaid', 'overdue') THEN i.amount
+                  WHEN i.id IS NULL AND hb.id IS NOT NULL AND hb.status = 'checked-out'
+                    THEN hb.total_price + COALESCE(bb.bills_total, 0)
+                  ELSE 0
+                END
+              ), 0) AS outstanding_amount
        FROM organizations o
        LEFT JOIN LATERAL (
          SELECT status
@@ -1180,6 +1187,11 @@ router.get("/", async (req: Request, res: Response, next: NextFunction) => {
        LEFT JOIN hotel_bookings hb ON hb.organization_id = o.id
                                  AND hb.created_by = ho.hotel_user_id::text
        LEFT JOIN corporate_invoices i ON i.booking_id = hb.id
+       LEFT JOIN (
+         SELECT booking_id, SUM(bill_amount) AS bills_total
+         FROM booking_bills
+         GROUP BY booking_id
+       ) bb ON bb.booking_id = hb.id
        WHERE ho.hotel_user_id = $1
        GROUP BY o.id, o.name, o.gst, o.credit_period, o.payment_terms, o.status, o.created_at, o.initial_outstanding, c.status
        ORDER BY o.created_at DESC`
