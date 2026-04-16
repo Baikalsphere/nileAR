@@ -295,7 +295,7 @@ CREATE TABLE IF NOT EXISTS booking_bills (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   booking_id uuid NOT NULL REFERENCES hotel_bookings(id) ON DELETE CASCADE,
   bill_category text NOT NULL,
-  file_name text NOT NULL,
+  file_name text,
   storage_path text,
   cloud_url text,
   cloud_public_id text,
