@@ -56,10 +56,12 @@ export default function AttachBillsClient({ bookingId }: { bookingId: string }) 
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [charges, setCharges] = useState<Charge[]>([])
+  const [mainBill, setMainBill] = useState<{ file: File | null; fileName?: string }>({ file: null })
   const [gstInvoice, setGstInvoice] = useState<{ file: File | null; fileName?: string }>({ file: null })
   const [dragOver, setDragOver] = useState<string | null>(null)
-  
+
   const fileRefs = useRef<Record<string, HTMLInputElement | null>>({})
+  const mainBillRef = useRef<HTMLInputElement>(null)
   const gstRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -87,11 +89,14 @@ export default function AttachBillsClient({ bookingId }: { bookingId: string }) 
 
   const handleFileSelect = (chargeId: string, file: File | null) => {
     if (!file) return
-    setCharges(prev => prev.map(c => 
-      c.id === chargeId 
-        ? { ...c, file, fileName: file.name }
-        : c
+    setCharges(prev => prev.map(c =>
+      c.id === chargeId ? { ...c, file, fileName: file.name } : c
     ))
+  }
+
+  const handleMainBillSelect = (file: File | null) => {
+    if (!file) return
+    setMainBill({ file, fileName: file.name })
   }
 
   const handleGstFileSelect = (file: File | null) => {
@@ -100,14 +105,15 @@ export default function AttachBillsClient({ bookingId }: { bookingId: string }) 
   }
 
   const handleRemoveFile = (chargeId: string) => {
-    setCharges(prev => prev.map(c => 
-      c.id === chargeId 
-        ? { ...c, file: null, fileName: undefined }
-        : c
+    setCharges(prev => prev.map(c =>
+      c.id === chargeId ? { ...c, file: null, fileName: undefined } : c
     ))
-    if (fileRefs.current[chargeId]) {
-      fileRefs.current[chargeId]!.value = ''
-    }
+    if (fileRefs.current[chargeId]) fileRefs.current[chargeId]!.value = ''
+  }
+
+  const handleRemoveMainBill = () => {
+    setMainBill({ file: null })
+    if (mainBillRef.current) mainBillRef.current.value = ''
   }
 
   const handleRemoveGst = () => {
@@ -116,10 +122,8 @@ export default function AttachBillsClient({ bookingId }: { bookingId: string }) 
   }
 
   const handleUpdateCharge = (chargeId: string, field: keyof Charge, value: any) => {
-    setCharges(prev => prev.map(c => 
-      c.id === chargeId 
-        ? { ...c, [field]: value }
-        : c
+    setCharges(prev => prev.map(c =>
+      c.id === chargeId ? { ...c, [field]: value } : c
     ))
   }
 
@@ -139,29 +143,22 @@ export default function AttachBillsClient({ bookingId }: { bookingId: string }) 
     setCharges(prev => prev.filter(c => c.id !== chargeId))
   }
 
-  const formatFileSize = (bytes: number) => {
-    if (bytes < 1024) return `${bytes} B`
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  }
-
   const parseChargeAmount = (value: string) => {
     const parsed = Number(value)
-    if (!Number.isFinite(parsed) || parsed < 0) {
-      return 0
-    }
-    return parsed
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0
   }
 
-  const uploadedCharges = charges.filter((charge) => charge.file)
-  const extraBillsTotal = uploadedCharges.reduce((sum, charge) => sum + parseChargeAmount(charge.amount), 0)
+  // All charges (with or without file) contribute to the total
+  const extraBillsTotal = charges.reduce((sum, charge) => sum + parseChargeAmount(charge.amount), 0)
   const updatedInvoiceTotal = booking ? booking.totalPrice + extraBillsTotal : extraBillsTotal
 
   const handleSubmit = async () => {
     const hasCharges = charges.length > 0
-    
-    if (!hasCharges && !gstInvoice.file) {
-      alert('Please add at least one charge or upload a GST e-invoice.')
+    const hasMainBill = Boolean(mainBill.file)
+    const hasGst = Boolean(gstInvoice.file)
+
+    if (!hasCharges && !hasMainBill && !hasGst) {
+      alert('Please attach at least one bill or add an additional charge.')
       return
     }
 
@@ -169,9 +166,26 @@ export default function AttachBillsClient({ bookingId }: { bookingId: string }) 
     try {
       const attachedDocuments: AttachedDocumentsMeta = {}
 
-      for (const charge of charges) {
-        if (!charge.file) continue
+      // Upload main bill
+      if (mainBill.file) {
+        attachedDocuments.roomCharges = {
+          name: mainBill.file.name,
+          size: mainBill.file.size,
+          type: mainBill.file.type,
+        }
+        await addBookingBill(bookingId, {
+          billCategory: 'Main Bill',
+          fileName: mainBill.file.name,
+          file: mainBill.file,
+          billAmount: 0,
+          mimeType: mainBill.file.type || null,
+          fileSize: mainBill.file.size,
+          notes: null,
+        })
+      }
 
+      // Upload additional charges (file is optional)
+      for (const charge of charges) {
         const parsedAmount = Number(charge.amount)
         if (!Number.isFinite(parsedAmount) || parsedAmount < 0) {
           alert(`Enter a valid amount for ${charge.serviceType}`)
@@ -179,31 +193,33 @@ export default function AttachBillsClient({ bookingId }: { bookingId: string }) 
           return
         }
 
-        const key = BILL_KEY_MAP[charge.serviceType] ?? 'miscellaneous'
-        attachedDocuments[key] = {
-          name: charge.file.name,
-          size: charge.file.size,
-          type: charge.file.type,
+        if (charge.file) {
+          const key = BILL_KEY_MAP[charge.serviceType] ?? 'miscellaneous'
+          attachedDocuments[key] = {
+            name: charge.file.name,
+            size: charge.file.size,
+            type: charge.file.type,
+          }
         }
 
         await addBookingBill(bookingId, {
           billCategory: charge.serviceType,
-          fileName: charge.file.name,
-          file: charge.file,
+          fileName: charge.file?.name,
+          file: charge.file ?? null,
           billAmount: parsedAmount,
-          mimeType: charge.file.type || null,
-          fileSize: charge.file.size,
+          mimeType: charge.file?.type || null,
+          fileSize: charge.file?.size ?? null,
           notes: charge.notes || null,
         })
       }
 
+      // Upload GST e-invoice
       if (gstInvoice.file) {
         attachedDocuments.miscellaneous = {
           name: gstInvoice.file.name,
           size: gstInvoice.file.size,
           type: gstInvoice.file.type,
         }
-
         await addBookingBill(bookingId, {
           billCategory: 'GST E-Invoice',
           fileName: gstInvoice.file.name,
@@ -216,7 +232,6 @@ export default function AttachBillsClient({ bookingId }: { bookingId: string }) 
       }
 
       saveAttachments(bookingId, attachedDocuments)
-      alert('Attachments saved successfully! Proceeding to send...')
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Failed to save attachments')
       setIsSubmitting(false)
@@ -301,7 +316,7 @@ export default function AttachBillsClient({ bookingId }: { bookingId: string }) 
                   <div className="text-right">
                     <p className="text-blue-200 text-sm">Contract Base Amount</p>
                     <p className="text-2xl font-extrabold">₹{formatInr(booking.totalPrice)}</p>
-                    <p className="text-blue-200 text-sm mt-1">Extra Bills: ₹{formatInr(extraBillsTotal)}</p>
+                    <p className="text-blue-200 text-sm mt-1">Additional Charges: ₹{formatInr(extraBillsTotal)}</p>
                     <p className="text-white text-lg font-bold mt-1">Updated Total: ₹{formatInr(updatedInvoiceTotal)}</p>
                     <p className="text-blue-200 text-sm mt-1">
                       Check-in: {new Date(booking.checkInDate).toLocaleDateString('en-IN')}
@@ -311,13 +326,67 @@ export default function AttachBillsClient({ bookingId }: { bookingId: string }) 
               </div>
             </div>
 
-            {/* Incidental Charges Section */}
+            {/* ── Section 1: Main Bill ── */}
             <div className="bg-surface-light dark:bg-surface-dark rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
-              {/* Header */}
+              <div className="p-6 border-b border-slate-200 dark:border-slate-700">
+                <div className="flex items-center gap-3 mb-1">
+                  <span className="material-symbols-outlined text-2xl text-primary">description</span>
+                  <h2 className="text-lg font-bold text-text-main-light dark:text-text-main-dark">Main Bill</h2>
+                </div>
+                <p className="text-sm text-text-sub-light dark:text-text-sub-dark ml-11">
+                  Upload the primary hotel folio or detailed bill for this stay
+                </p>
+              </div>
+
+              <div className="p-6">
+                <input
+                  ref={mainBillRef}
+                  type="file"
+                  onChange={(e) => handleMainBillSelect(e.target.files?.[0] || null)}
+                  className="hidden"
+                  accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+                />
+
+                {mainBill.file && mainBill.fileName ? (
+                  <div className="border-2 border-dashed border-emerald-500/50 bg-emerald-50/50 dark:bg-emerald-900/10 rounded-lg p-6 text-center">
+                    <div className="size-10 rounded-full bg-emerald-100 dark:bg-emerald-900/50 flex items-center justify-center text-emerald-600 dark:text-emerald-400 mx-auto mb-3">
+                      <span className="material-symbols-outlined text-xl">check</span>
+                    </div>
+                    <p className="text-sm font-medium text-slate-700 dark:text-slate-300 truncate">{mainBill.fileName}</p>
+                    <p className="text-xs text-slate-400 mt-1">Uploaded successfully</p>
+                    <button type="button" onClick={handleRemoveMainBill} className="mt-3 text-xs text-red-500 hover:text-red-600 font-bold uppercase tracking-wider">
+                      Remove
+                    </button>
+                  </div>
+                ) : (
+                  <div
+                    onDrop={(e) => { e.preventDefault(); setDragOver(null); handleMainBillSelect(e.dataTransfer.files?.[0] || null) }}
+                    onDragOver={(e) => { e.preventDefault(); setDragOver('mainBill') }}
+                    onDragLeave={() => setDragOver(null)}
+                    onClick={() => mainBillRef.current?.click()}
+                    className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-all ${
+                      dragOver === 'mainBill'
+                        ? 'border-primary bg-blue-50 dark:bg-blue-900/20'
+                        : 'border-primary/30 bg-primary/5 hover:bg-primary/10 dark:bg-slate-900 hover:border-primary'
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-4xl text-primary block mb-3">upload_file</span>
+                    <p className="text-sm font-medium text-primary mb-1">Click to upload or drag the main hotel bill</p>
+                    <p className="text-xs text-slate-400">PDF, JPG, PNG, DOC (Max 20MB)</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* ── Section 2: Additional Charges ── */}
+            <div className="bg-surface-light dark:bg-surface-dark rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
               <div className="p-6 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <span className="material-symbols-outlined text-2xl text-primary">receipt_long</span>
-                  <h2 className="text-lg font-bold text-text-main-light dark:text-text-main-dark">Incidental Charges & Uploads</h2>
+                  <div>
+                    <h2 className="text-lg font-bold text-text-main-light dark:text-text-main-dark">Additional Charges</h2>
+                    <p className="text-xs text-text-sub-light dark:text-text-sub-dark mt-0.5">Receipt upload is optional for each charge</p>
+                  </div>
                 </div>
                 <button
                   onClick={handleAddCharge}
@@ -328,20 +397,18 @@ export default function AttachBillsClient({ bookingId }: { bookingId: string }) 
                 </button>
               </div>
 
-              {/* Charges List */}
               <div className="p-6 space-y-6">
                 {charges.length === 0 ? (
                   <div className="text-center py-12">
                     <span className="material-symbols-outlined text-5xl text-slate-300 dark:text-slate-700 block mb-3">inbox</span>
-                    <p className="text-text-sub-light dark:text-text-sub-dark">No charges added yet. Click "Add Charge" to get started.</p>
+                    <p className="text-text-sub-light dark:text-text-sub-dark">No additional charges. Click "Add Charge" to add service charges.</p>
                   </div>
                 ) : (
                   charges.map((charge) => (
                     <div key={charge.id} className="border border-slate-200 dark:border-slate-700 rounded-xl p-6 hover:border-primary/40 dark:hover:border-primary/40 transition-colors">
                       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                        {/* Left Column: Form Fields */}
+                        {/* Left: Form Fields */}
                         <div className="lg:col-span-2 space-y-4">
-                          {/* Service Type */}
                           <div>
                             <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-2">
                               Service Type
@@ -352,19 +419,14 @@ export default function AttachBillsClient({ bookingId }: { bookingId: string }) 
                               className="w-full px-4 py-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
                             >
                               {SERVICE_TYPES.map(type => (
-                                <option key={type} value={type}>
-                                  {type}
-                                </option>
+                                <option key={type} value={type}>{type}</option>
                               ))}
                             </select>
                           </div>
 
-                          {/* Date and Amount Row */}
                           <div className="grid grid-cols-2 gap-4">
                             <div>
-                              <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-2">
-                                Date
-                              </label>
+                              <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-2">Date</label>
                               <input
                                 type="date"
                                 value={charge.date}
@@ -373,9 +435,7 @@ export default function AttachBillsClient({ bookingId }: { bookingId: string }) 
                               />
                             </div>
                             <div>
-                              <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-2">
-                                Amount (₹)
-                              </label>
+                              <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-2">Amount (₹)</label>
                               <input
                                 type="number"
                                 step="0.01"
@@ -388,11 +448,8 @@ export default function AttachBillsClient({ bookingId }: { bookingId: string }) 
                             </div>
                           </div>
 
-                          {/* Notes */}
                           <div>
-                            <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-2">
-                              Notes
-                            </label>
+                            <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-2">Notes</label>
                             <input
                               type="text"
                               value={charge.notes}
@@ -403,10 +460,10 @@ export default function AttachBillsClient({ bookingId }: { bookingId: string }) 
                           </div>
                         </div>
 
-                        {/* Right Column: File Upload */}
+                        {/* Right: File Upload (optional) */}
                         <div className="lg:col-span-1">
                           <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-2">
-                            Receipt Attachment
+                            Receipt <span className="normal-case font-normal text-slate-400">(optional)</span>
                           </label>
                           <input
                             ref={(el) => { fileRefs.current[charge.id] = el }}
@@ -417,49 +474,36 @@ export default function AttachBillsClient({ bookingId }: { bookingId: string }) 
                           />
 
                           {charge.file && charge.fileName ? (
-                            // Uploaded state
                             <div className="h-full min-h-[140px] flex flex-col justify-center items-center border-2 border-dashed border-emerald-500/50 bg-emerald-50/50 dark:bg-emerald-900/10 rounded-lg p-4 text-center">
                               <div className="size-8 rounded-full bg-emerald-100 dark:bg-emerald-900/50 flex items-center justify-center text-emerald-600 dark:text-emerald-400 mb-2">
                                 <span className="material-symbols-outlined text-lg">check</span>
                               </div>
-                              <p className="text-xs font-medium text-slate-700 dark:text-slate-300 truncate max-w-full">
-                                {charge.fileName}
-                              </p>
-                              <p className="text-[10px] text-slate-400 mt-1">Uploaded successfully</p>
-                              <button
-                                type="button"
-                                onClick={() => handleRemoveFile(charge.id)}
-                                className="mt-2 text-[10px] text-red-500 hover:text-red-600 font-bold uppercase tracking-wider"
-                              >
+                              <p className="text-xs font-medium text-slate-700 dark:text-slate-300 truncate max-w-full">{charge.fileName}</p>
+                              <p className="text-[10px] text-slate-400 mt-1">Uploaded</p>
+                              <button type="button" onClick={() => handleRemoveFile(charge.id)} className="mt-2 text-[10px] text-red-500 hover:text-red-600 font-bold uppercase tracking-wider">
                                 Remove
                               </button>
                             </div>
                           ) : (
-                            // Upload state
                             <div
-                              onDrop={(e) => {
-                                e.preventDefault()
-                                setDragOver(null)
-                                handleFileSelect(charge.id, e.dataTransfer.files?.[0] || null)
-                              }}
+                              onDrop={(e) => { e.preventDefault(); setDragOver(null); handleFileSelect(charge.id, e.dataTransfer.files?.[0] || null) }}
                               onDragOver={(e) => { e.preventDefault(); setDragOver(charge.id) }}
                               onDragLeave={() => setDragOver(null)}
                               onClick={() => fileRefs.current[charge.id]?.click()}
                               className={`h-full min-h-[140px] flex flex-col justify-center items-center border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-all ${
                                 dragOver === charge.id
                                   ? 'border-primary bg-blue-50 dark:bg-blue-900/20 scale-105'
-                                  : 'border-primary/30 bg-primary/5 hover:bg-primary/10 dark:bg-slate-900 hover:border-primary'
+                                  : 'border-slate-300/60 dark:border-slate-600/60 bg-slate-50/50 dark:bg-slate-800/30 hover:border-primary/50 hover:bg-primary/5'
                               }`}
                             >
-                              <span className="material-symbols-outlined text-3xl text-primary mb-2">cloud_upload</span>
-                              <p className="text-xs font-medium text-primary">Click to upload or drag receipt</p>
-                              <p className="text-[10px] text-slate-400 mt-1">PDF, JPG, PNG (Max 5MB)</p>
+                              <span className="material-symbols-outlined text-2xl text-slate-400 dark:text-slate-500 mb-2">cloud_upload</span>
+                              <p className="text-xs text-slate-500 dark:text-slate-400">Click to attach receipt</p>
+                              <p className="text-[10px] text-slate-400 mt-1">PDF, JPG, PNG (optional)</p>
                             </div>
                           )}
                         </div>
                       </div>
 
-                      {/* Remove Button */}
                       <button
                         type="button"
                         onClick={() => handleRemoveCharge(charge.id)}
@@ -472,7 +516,6 @@ export default function AttachBillsClient({ bookingId }: { bookingId: string }) 
                   ))
                 )}
 
-                {/* Add Another Charge Button */}
                 {charges.length > 0 && (
                   <div
                     onClick={handleAddCharge}
@@ -487,7 +530,7 @@ export default function AttachBillsClient({ bookingId }: { bookingId: string }) 
               </div>
             </div>
 
-            {/* GST E-Invoice Section */}
+            {/* ── Section 3: GST E-Invoice ── */}
             <div className="bg-surface-light dark:bg-surface-dark rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
               <div className="p-6 border-b border-slate-200 dark:border-slate-700">
                 <div className="flex items-center gap-3 mb-1">
@@ -511,25 +554,15 @@ export default function AttachBillsClient({ bookingId }: { bookingId: string }) 
                     <div className="size-10 rounded-full bg-emerald-100 dark:bg-emerald-900/50 flex items-center justify-center text-emerald-600 dark:text-emerald-400 mx-auto mb-3">
                       <span className="material-symbols-outlined text-xl">check</span>
                     </div>
-                    <p className="text-sm font-medium text-slate-700 dark:text-slate-300 truncate">
-                      {gstInvoice.fileName}
-                    </p>
+                    <p className="text-sm font-medium text-slate-700 dark:text-slate-300 truncate">{gstInvoice.fileName}</p>
                     <p className="text-xs text-slate-400 mt-1">Uploaded successfully</p>
-                    <button
-                      type="button"
-                      onClick={handleRemoveGst}
-                      className="mt-3 text-xs text-red-500 hover:text-red-600 font-bold uppercase tracking-wider"
-                    >
+                    <button type="button" onClick={handleRemoveGst} className="mt-3 text-xs text-red-500 hover:text-red-600 font-bold uppercase tracking-wider">
                       Remove
                     </button>
                   </div>
                 ) : (
                   <div
-                    onDrop={(e) => {
-                      e.preventDefault()
-                      setDragOver(null)
-                      handleGstFileSelect(e.dataTransfer.files?.[0] || null)
-                    }}
+                    onDrop={(e) => { e.preventDefault(); setDragOver(null); handleGstFileSelect(e.dataTransfer.files?.[0] || null) }}
                     onDragOver={(e) => { e.preventDefault(); setDragOver('gst') }}
                     onDragLeave={() => setDragOver(null)}
                     onClick={() => gstRef.current?.click()}

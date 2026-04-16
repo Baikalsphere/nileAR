@@ -1177,14 +1177,6 @@ router.post("/:bookingId/bills", billUpload.single("file"), async (req, res, nex
     const payload = bookingBillsSchema.parse(req.body);
     const uploadedFile = req.file;
 
-    if (!uploadedFile) {
-      return res.status(400).json({ error: { message: "Attach a file before saving bill" } });
-    }
-
-    if (!isSupabaseStorageConfigured()) {
-      return res.status(500).json({ error: { message: "Supabase storage is not configured" } });
-    }
-
     const booking = await query(
       `SELECT id
        FROM hotel_bookings
@@ -1196,12 +1188,21 @@ router.post("/:bookingId/bills", billUpload.single("file"), async (req, res, nex
       return res.status(404).json({ error: { message: "Booking not found" } });
     }
 
-    const uploadResult = await uploadBillFileToSupabase({
-      bookingId,
-      originalFileName: uploadedFile.originalname,
-      mimeType: uploadedFile.mimetype,
-      fileBuffer: uploadedFile.buffer
-    });
+    let objectPath: string | null = null;
+    let cloudUrl: string | null = null;
+
+    if (uploadedFile) {
+      if (!isSupabaseStorageConfigured()) {
+        return res.status(500).json({ error: { message: "Supabase storage is not configured" } });
+      }
+      const uploadResult = await uploadBillFileToSupabase({
+        bookingId,
+        originalFileName: uploadedFile.originalname,
+        mimeType: uploadedFile.mimetype,
+        fileBuffer: uploadedFile.buffer
+      });
+      objectPath = uploadResult.objectPath;
+    }
 
     const result = await query(
       `INSERT INTO booking_bills (booking_id, bill_category, file_name, storage_path, cloud_url, cloud_public_id, storage_provider, bill_amount, mime_type, file_size, notes)
@@ -1210,14 +1211,14 @@ router.post("/:bookingId/bills", billUpload.single("file"), async (req, res, nex
       [
         bookingId,
         payload.billCategory.trim(),
-        uploadedFile.originalname.trim(),
+        uploadedFile ? uploadedFile.originalname.trim() : normalizeOptional(payload.fileName),
         null,
-        null,
-        uploadResult.objectPath,
-        "supabase",
+        cloudUrl,
+        objectPath,
+        uploadedFile ? "supabase" : null,
         payload.billAmount ?? 0,
-        uploadedFile.mimetype ?? normalizeOptional(payload.mimeType),
-        uploadedFile.size ?? payload.fileSize ?? null,
+        uploadedFile ? (uploadedFile.mimetype ?? normalizeOptional(payload.mimeType)) : normalizeOptional(payload.mimeType),
+        uploadedFile ? (uploadedFile.size ?? payload.fileSize ?? null) : (payload.fileSize ?? null),
         normalizeOptional(payload.notes)
       ]
     );
@@ -1229,7 +1230,7 @@ router.post("/:bookingId/bills", billUpload.single("file"), async (req, res, nex
         bookingId,
         billCategory: row.bill_category,
         fileName: row.file_name,
-        hasFile: Boolean(row.storage_path || row.cloud_url || uploadResult.objectPath),
+        hasFile: Boolean(row.storage_path || row.cloud_url || objectPath),
         fileUrl: row.cloud_url,
         storageProvider: row.storage_provider,
         billAmount: Number(row.bill_amount ?? 0),

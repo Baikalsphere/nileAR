@@ -69,7 +69,9 @@ export default function InvoicePreviewClient({ bookingId }: { bookingId: string 
     void loadInvoicePreview()
   }, [bookingId, router])
 
-  const extraBills = useMemo(() => bills.filter((bill) => Number(bill.billAmount ?? 0) > 0), [bills])
+  // Include all bills that either have an amount or a file (covers file-less charge-only entries)
+  const extraBills = useMemo(() => bills.filter((bill) => bill.billCategory !== 'Main Bill' && bill.billCategory !== 'GST E-Invoice'), [bills])
+  const mainBills = useMemo(() => bills.filter((bill) => bill.billCategory === 'Main Bill' || bill.billCategory === 'GST E-Invoice'), [bills])
   const extraBillsTotal = useMemo(
     () => extraBills.reduce((sum, bill) => sum + Number(bill.billAmount ?? 0), 0),
     [extraBills]
@@ -182,12 +184,25 @@ export default function InvoicePreviewClient({ bookingId }: { bookingId: string 
                         </td>
                         <td className="px-6 py-4 text-right font-semibold">{formatCurrency(roomCharges)}</td>
                       </tr>
+                      {mainBills.map((bill) => (
+                        <tr key={bill.id}>
+                          <td className="px-6 py-4 font-medium">{bill.billCategory}</td>
+                          <td className="px-6 py-4 text-slate-600 dark:text-slate-300">
+                            <div>{bill.fileName ?? <span className="italic text-slate-400">No file name</span>}</div>
+                            <div className="text-xs text-slate-400">{bill.hasFile ? 'Attached' : 'No file attached'}</div>
+                          </td>
+                          <td className="px-6 py-4 text-right font-semibold">—</td>
+                        </tr>
+                      ))}
                       {extraBills.length > 0 ? (
                         extraBills.map((bill) => (
                           <tr key={bill.id}>
                             <td className="px-6 py-4 font-medium">{bill.billCategory}</td>
                             <td className="px-6 py-4 text-slate-600 dark:text-slate-300">
-                              <div>{bill.fileName}</div>
+                              {bill.fileName
+                                ? <div>{bill.fileName}</div>
+                                : <div className="italic text-slate-400 text-xs">No receipt attached</div>
+                              }
                               <div className="text-xs text-slate-400">{bill.notes?.trim() ? bill.notes : 'Additional service charge'}</div>
                             </td>
                             <td className="px-6 py-4 text-right font-semibold">{formatCurrency(Number(bill.billAmount ?? 0))}</td>
@@ -195,8 +210,8 @@ export default function InvoicePreviewClient({ bookingId }: { bookingId: string 
                         ))
                       ) : (
                         <tr>
-                          <td className="px-6 py-4 font-medium">Additional Charges</td>
-                          <td className="px-6 py-4 text-slate-500 dark:text-slate-400">No extra charges were added to this invoice.</td>
+                          <td className="px-6 py-4 font-medium text-slate-500">Additional Charges</td>
+                          <td className="px-6 py-4 text-slate-400">No additional charges were added to this invoice.</td>
                           <td className="px-6 py-4 text-right font-semibold">{formatCurrency(0)}</td>
                         </tr>
                       )}
@@ -256,10 +271,12 @@ export default function InvoicePreviewClient({ bookingId }: { bookingId: string 
                         <div key={bill.id} className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-4 py-3 dark:bg-slate-900/40">
                           <div>
                             <p className="font-medium">{bill.billCategory}</p>
-                            <p className="text-xs text-slate-500 dark:text-slate-400">{bill.fileName}</p>
+                            <p className="text-xs text-slate-500 dark:text-slate-400">
+                              {bill.fileName ?? (bill.hasFile ? 'File attached' : 'No receipt')}
+                            </p>
                           </div>
                           <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">
-                            {formatCurrency(Number(bill.billAmount ?? 0))}
+                            {Number(bill.billAmount ?? 0) > 0 ? formatCurrency(Number(bill.billAmount)) : '—'}
                           </span>
                         </div>
                       ))

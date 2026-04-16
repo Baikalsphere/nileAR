@@ -220,7 +220,7 @@ export default function InvoiceDetailClient() {
                           <td className="py-4 px-5 font-medium">{bill.billCategory}</td>
                           <td className="py-4 px-5">
                             <div className="flex flex-col gap-1">
-                              <span>{bill.fileName}</span>
+                              <span>{bill.fileName ?? <span className="italic text-slate-400">No receipt attached</span>}</span>
                               {getBillAssetUrl(bill) ? (
                                 <a
                                   href={getBillAssetUrl(bill) ?? '#'}
@@ -230,8 +230,10 @@ export default function InvoiceDetailClient() {
                                 >
                                   Open exact copy
                                 </a>
-                              ) : (
+                              ) : bill.hasFile ? (
                                 <span className="text-xs text-slate-400">File copy unavailable</span>
+                              ) : (
+                                <span className="text-xs text-slate-400">No file attached</span>
                               )}
                             </div>
                           </td>
@@ -251,11 +253,11 @@ export default function InvoiceDetailClient() {
                 </table>
               </div>
 
-              {invoice.bills.length > 0 ? (
+              {invoice.bills.filter(b => b.hasFile).length > 0 ? (
                 <div className="px-5 pb-5 pt-4 border-t border-slate-100 dark:border-slate-800">
                   <h4 className="font-semibold text-sm text-slate-700 dark:text-slate-200 mb-3">Uploaded Bill Copies</h4>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {invoice.bills.map((bill) => {
+                    {invoice.bills.filter(b => b.hasFile).map((bill) => {
                       const assetUrl = getBillAssetUrl(bill)
                       return (
                         <div key={bill.id} className="rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden bg-slate-50 dark:bg-slate-900/30">
