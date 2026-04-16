@@ -558,8 +558,10 @@ router.get("/dashboard/summary", async (req, res, next) => {
       const isActive = ["pending", "confirmed", "checked-in"].includes(status);
       const isCompleted = status === "checked-out";
       const isCancelled = status === "cancelled";
-      const isPaid = String(row.invoice_status ?? "").toLowerCase() === "paid";
-      const paidAmount = Number(row.invoice_amount ?? 0);
+      const invoiceStatus = String(row.invoice_status ?? "").toLowerCase();
+      const hasInvoice = Boolean(row.invoice_amount !== null && row.invoice_amount !== undefined);
+      const isPaid = invoiceStatus === "paid";
+      const invoiceAmount = Number(row.invoice_amount ?? 0);
 
       return {
         totalPrice,
@@ -570,8 +572,9 @@ router.get("/dashboard/summary", async (req, res, next) => {
         isActive,
         isCompleted,
         isCancelled,
+        hasInvoice,
         isPaid,
-        paidAmount
+        invoiceAmount
       };
     });
 
@@ -591,15 +594,17 @@ router.get("/dashboard/summary", async (req, res, next) => {
       .filter((b) => !b.isCancelled)
       .reduce((sum, b) => sum + b.totalPrice, 0);
 
-    // Collected = bookings whose invoice has been paid
+    // Collected = bookings whose invoice has been paid/approved
     const totalCollected = bookings
       .filter((b) => b.isPaid)
-      .reduce((sum, b) => sum + b.paidAmount, 0);
+      .reduce((sum, b) => sum + b.invoiceAmount, 0);
 
-    // Pending = active bookings (pending, confirmed, checked-in)
+    // Pending = all non-cancelled, non-paid amounts still owed
+    // For invoiced (unpaid/overdue) bookings: use invoice amount (room + bills)
+    // For non-invoiced bookings: use total_price (room + bills from query)
     const totalPending = bookings
-      .filter((b) => b.isActive)
-      .reduce((sum, b) => sum + b.totalPrice, 0);
+      .filter((b) => !b.isCancelled && !b.isPaid)
+      .reduce((sum, b) => sum + (b.hasInvoice ? b.invoiceAmount : b.totalPrice), 0);
 
     // Active bookings count
     const activeBookings = bookings.filter((b) => b.isActive).length;
