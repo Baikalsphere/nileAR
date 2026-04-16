@@ -299,7 +299,7 @@ CREATE TABLE IF NOT EXISTS booking_bills (
   storage_path text,
   cloud_url text,
   cloud_public_id text,
-  storage_provider text NOT NULL DEFAULT 'local',
+  storage_provider text,
   bill_amount numeric(12,2) NOT NULL DEFAULT 0,
   mime_type text,
   file_size integer,
@@ -312,7 +312,7 @@ ALTER TABLE booking_bills
   ADD COLUMN IF NOT EXISTS storage_path text,
   ADD COLUMN IF NOT EXISTS cloud_url text,
   ADD COLUMN IF NOT EXISTS cloud_public_id text,
-  ADD COLUMN IF NOT EXISTS storage_provider text NOT NULL DEFAULT 'local',
+  ADD COLUMN IF NOT EXISTS storage_provider text,
   ADD COLUMN IF NOT EXISTS bill_amount numeric(12,2) NOT NULL DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS booking_bills_booking_id_idx
