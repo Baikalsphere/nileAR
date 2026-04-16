@@ -2758,7 +2758,7 @@ router.get("/corporate/invoices", async (req, res, next) => {
       `SELECT i.id, i.invoice_number, i.invoice_date, i.due_date, i.amount, i.status,
               i.sent_at, i.created_at,
               b.created_by AS hotel_id,
-              e.full_name AS employee_name,
+              COALESCE(e.full_name, b.guest_name) AS employee_name,
               e.email AS employee_code,
         s.property_name,
         hp.hotel_name AS sender_hotel_name,
@@ -2766,7 +2766,7 @@ router.get("/corporate/invoices", async (req, res, next) => {
         hp.location AS sender_hotel_location
        FROM corporate_invoices i
       JOIN hotel_bookings b ON b.id = i.booking_id
-       JOIN portal_users e ON e.id = i.employee_id
+       LEFT JOIN portal_users e ON e.id = i.employee_id
        LEFT JOIN employee_stays s ON s.invoice_id = i.id
       LEFT JOIN hotel_profiles hp ON hp.user_id::text = b.created_by
        WHERE i.organization_id = $1
@@ -2811,7 +2811,7 @@ router.get("/corporate/invoices/:invoiceId", async (req, res, next) => {
               i.sent_at, i.created_at,
               b.id AS booking_id, b.booking_number, b.room_type, b.check_in_date, b.check_out_date,
               b.nights, b.price_per_night, b.total_price,
-              e.full_name AS employee_name, e.email AS employee_code,
+              COALESCE(e.full_name, b.guest_name) AS employee_name, e.email AS employee_code,
               b.created_by AS hotel_id,
               s.property_name,
               hp.hotel_name AS sender_hotel_name,
@@ -2819,7 +2819,7 @@ router.get("/corporate/invoices/:invoiceId", async (req, res, next) => {
               hp.location AS sender_hotel_location
        FROM corporate_invoices i
        JOIN hotel_bookings b ON b.id = i.booking_id
-       JOIN portal_users e ON e.id = i.employee_id
+       LEFT JOIN portal_users e ON e.id = i.employee_id
        LEFT JOIN employee_stays s ON s.invoice_id = i.id
       LEFT JOIN hotel_profiles hp ON hp.user_id::text = b.created_by
        WHERE i.organization_id = $1
