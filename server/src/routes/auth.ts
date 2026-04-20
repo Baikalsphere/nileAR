@@ -1445,6 +1445,8 @@ router.get("/hotel/me", async (req, res, next) => {
           [userId, `${payload.bsEmail.split("@")[0]}'s Hotel`, payload.bsEmail]
         );
 
+        await query(`UPDATE users SET last_login_at = NOW() WHERE id = $1`, [userId]);
+
         // Update payload.sub so downstream code uses the new AR user ID
         payload.sub = userId;
 
@@ -1479,6 +1481,14 @@ router.get("/hotel/me", async (req, res, next) => {
     }
 
     const row = result.rows[0];
+
+    // Update last_login_at for SSO users (no explicit /login call in SSO flow)
+    if (payload.bsUserId) {
+      await query(
+        `UPDATE users SET last_login_at = NOW() WHERE id = $1 AND (last_login_at IS NULL OR last_login_at < NOW() - INTERVAL '30 minutes')`,
+        [row.id]
+      );
+    }
 
     // If sub-user, add sub-user info
     if (payload.isSubUser && payload.parentId) {
