@@ -376,7 +376,7 @@ export const sendBookingInvoice = async (
   bookingId: string,
   payload: {
     recipientEmail?: string
-    ccEmail?: string
+    ccEmails?: string[]
     portalBaseUrl?: string
     bills?: Array<{ category: string; fileName: string }>
   }

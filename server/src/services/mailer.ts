@@ -7,7 +7,7 @@ let resendClient: Resend | null = null;
 
 type SendMailPayload = {
   to: string;
-  cc?: string;
+  cc?: string | string[];
   subject: string;
   text: string;
   html: string;
@@ -71,7 +71,9 @@ const sendMail = async (payload: SendMailPayload) => {
     const { error } = await resend.emails.send({
       from: config.resendFrom!,
       to: [payload.to],
-      cc: payload.cc ? [payload.cc] : undefined,
+      cc: payload.cc
+        ? (Array.isArray(payload.cc) ? payload.cc : payload.cc.split(",").map((e) => e.trim()).filter(Boolean))
+        : undefined,
       subject: payload.subject,
       text: payload.text,
       html: payload.html
@@ -189,7 +191,7 @@ export const sendContractSignatureLinkEmail = async (payload: {
 
 export const sendCorporateInvoiceCoverLetterEmail = async (payload: {
   recipientEmail: string;
-  ccEmail?: string | null;
+  ccEmails?: string[] | null;
   organizationName: string;
   invoiceNumber: string;
   bookingNumber: string;
@@ -212,7 +214,7 @@ export const sendCorporateInvoiceCoverLetterEmail = async (payload: {
 
   await sendMail({
     to: payload.recipientEmail,
-    cc: payload.ccEmail ?? undefined,
+    cc: (payload.ccEmails && payload.ccEmails.length > 0) ? payload.ccEmails : undefined,
     subject: `Invoice ${payload.invoiceNumber} - ${payload.organizationName}`,
     text: [
       `Hello ${payload.organizationName},`,

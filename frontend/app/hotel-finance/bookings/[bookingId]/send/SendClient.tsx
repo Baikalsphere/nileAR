@@ -30,7 +30,9 @@ export default function SendClient({ bookingId }: { bookingId: string }) {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [attachments, setAttachments] = useState<AttachedDocumentsMeta | null>(null)
   const [recipientEmail, setRecipientEmail] = useState('')
-  const [ccEmail, setCcEmail] = useState('')
+  const [ccEmails, setCcEmails] = useState<string[]>([])
+  const [ccInput, setCcInput] = useState('')
+  const [ccInputError, setCcInputError] = useState(false)
   const [isSending, setIsSending] = useState(false)
   const [isSent, setIsSent] = useState(false)
   const [sentInvoiceNumber, setSentInvoiceNumber] = useState<string | null>(null)
@@ -130,9 +132,15 @@ export default function SendClient({ bookingId }: { bookingId: string }) {
     }
     setIsSending(true)
     try {
+      // Commit any unconfirmed CC input before sending
+      const finalCcEmails = [...ccEmails]
+      if (ccInput.trim() && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ccInput.trim())) {
+        finalCcEmails.push(ccInput.trim().toLowerCase())
+      }
+
       const response = await sendBookingInvoice(bookingId, {
         recipientEmail,
-        ccEmail,
+        ccEmails: finalCcEmails.length > 0 ? finalCcEmails : undefined,
         portalBaseUrl: typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'
       })
 
@@ -268,14 +276,86 @@ export default function SendClient({ bookingId }: { bookingId: string }) {
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-text-main-light dark:text-text-main-dark mb-1.5">CC</label>
-                      <input
-                        type="email"
-                        value={ccEmail}
-                        onChange={(e) => setCcEmail(e.target.value)}
-                        placeholder="Optional CC address"
-                        className="w-full px-3 py-2.5 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-900 text-sm text-text-main-light dark:text-text-main-dark placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-                      />
+                      <label className="block text-xs font-semibold text-text-main-light dark:text-text-main-dark mb-1.5">
+                        CC
+                        {ccEmails.length > 0 && (
+                          <span className="ml-1.5 text-[10px] font-bold text-primary bg-blue-50 dark:bg-blue-900/20 px-1.5 py-0.5 rounded-full">
+                            {ccEmails.length}
+                          </span>
+                        )}
+                      </label>
+                      {/* Chip container */}
+                      <div
+                        className={`flex flex-wrap gap-1.5 min-h-[42px] px-2.5 py-2 border rounded-lg bg-white dark:bg-slate-900 focus-within:ring-2 focus-within:ring-primary focus-within:border-transparent transition-colors ${ccInputError ? 'border-red-400 dark:border-red-500' : 'border-slate-300 dark:border-slate-600'}`}
+                        onClick={(e) => {
+                          const input = (e.currentTarget as HTMLElement).querySelector('input')
+                          input?.focus()
+                        }}
+                      >
+                        {ccEmails.map((email) => (
+                          <span
+                            key={email}
+                            className="inline-flex items-center gap-1 bg-blue-50 dark:bg-blue-900/25 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-700 text-xs font-medium px-2 py-0.5 rounded-full"
+                          >
+                            {email}
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); setCcEmails(ccEmails.filter((em) => em !== email)) }}
+                              className="hover:text-red-500 transition-colors ml-0.5"
+                              aria-label={`Remove ${email}`}
+                            >
+                              <span className="material-symbols-outlined text-[13px]">close</span>
+                            </button>
+                          </span>
+                        ))}
+                        <input
+                          type="text"
+                          value={ccInput}
+                          onChange={(e) => { setCcInput(e.target.value); setCcInputError(false) }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ',' || e.key === ' ' || e.key === 'Tab') {
+                              e.preventDefault()
+                              const val = ccInput.trim().replace(/,$/, '')
+                              if (!val) return
+                              if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) { setCcInputError(true); return }
+                              if (!ccEmails.includes(val.toLowerCase())) {
+                                setCcEmails([...ccEmails, val.toLowerCase()])
+                              }
+                              setCcInput('')
+                              setCcInputError(false)
+                            }
+                            if (e.key === 'Backspace' && !ccInput && ccEmails.length > 0) {
+                              setCcEmails(ccEmails.slice(0, -1))
+                            }
+                          }}
+                          onBlur={() => {
+                            const val = ccInput.trim().replace(/,$/, '')
+                            if (!val) return
+                            if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) { setCcInputError(true); return }
+                            if (!ccEmails.includes(val.toLowerCase())) {
+                              setCcEmails([...ccEmails, val.toLowerCase()])
+                            }
+                            setCcInput('')
+                            setCcInputError(false)
+                          }}
+                          onPaste={(e) => {
+                            const pasted = e.clipboardData.getData('text')
+                            const parts = pasted.split(/[\s,;]+/).map((s) => s.trim()).filter(Boolean)
+                            if (parts.length > 1) {
+                              e.preventDefault()
+                              const valid = parts.filter((p) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(p))
+                              const combined = [...new Set([...ccEmails, ...valid.map((v) => v.toLowerCase())])]
+                              setCcEmails(combined)
+                            }
+                          }}
+                          placeholder={ccEmails.length === 0 ? 'Add CC address, press Enter or comma' : ''}
+                          className="flex-1 min-w-[140px] text-sm text-text-main-light dark:text-text-main-dark placeholder-slate-400 bg-transparent outline-none"
+                        />
+                      </div>
+                      {ccInputError && (
+                        <p className="mt-1 text-xs text-red-500">Please enter a valid email address</p>
+                      )}
+                      <p className="mt-1 text-[11px] text-slate-400">Press Enter, comma, or Tab to add. Paste multiple addresses at once.</p>
                     </div>
                   </div>
                 </div>

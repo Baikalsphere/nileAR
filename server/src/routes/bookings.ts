@@ -59,10 +59,7 @@ const sendInvoiceSchema = z.object({
     (v) => (v === "" ? null : v),
     z.string().email().max(320).optional().nullable()
   ),
-  ccEmail: z.preprocess(
-    (v) => (v === "" ? null : v),
-    z.string().email().max(320).optional().nullable()
-  ),
+  ccEmails: z.array(z.string().email().max(320)).max(20).optional().nullable(),
   portalBaseUrl: z.preprocess(
     (v) => (v === "" ? null : v),
     z.string().url().max(500).optional().nullable()
@@ -1421,7 +1418,9 @@ router.post("/:bookingId/send", async (req, res, next) => {
       return res.status(400).json({ error: { message: "Recipient email not found for organization" } });
     }
 
-    const ccEmail = normalizeOptional(payload.ccEmail)?.toLowerCase() ?? null;
+    const ccEmail = (payload.ccEmails && payload.ccEmails.length > 0)
+      ? payload.ccEmails.map((e) => e.trim().toLowerCase()).join(", ")
+      : null;
     const invoiceDate = new Date(booking.check_out_date);
     const dueDate = new Date(invoiceDate);
     dueDate.setDate(dueDate.getDate() + parseCreditPeriodDays(booking.credit_period, 15));
@@ -1512,7 +1511,7 @@ router.post("/:bookingId/send", async (req, res, next) => {
 
     await sendCorporateInvoiceCoverLetterEmail({
       recipientEmail,
-      ccEmail,
+      ccEmails: ccEmail ? ccEmail.split(",").map((e) => e.trim()).filter(Boolean) : null,
       organizationName: booking.organization_name,
       invoiceNumber: invoice.invoice_number,
       bookingNumber: booking.booking_number,
