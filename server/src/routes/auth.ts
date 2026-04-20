@@ -1034,7 +1034,7 @@ router.post("/admin/hotel-accounts", async (req, res, next) => {
 
 router.get("/admin/hotel-activity", async (_req, res, next) => {
   try {
-    const result = await query(
+    const hotelsResult = await query(
       `SELECT
          u.id,
          u.email,
@@ -1052,7 +1052,25 @@ router.get("/admin/hotel-activity", async (_req, res, next) => {
            WHERE rt.user_id = u.id
              AND rt.revoked_at IS NULL
              AND rt.expires_at > NOW()
-         ) AS active_sessions
+         ) AS active_sessions,
+         (
+           SELECT COUNT(*)::int
+           FROM refresh_tokens rt
+           WHERE rt.user_id = u.id
+         ) AS total_sessions,
+         (
+           SELECT COALESCE(
+             SUM(
+               EXTRACT(EPOCH FROM (
+                 LEAST(COALESCE(rt.revoked_at, NOW()), rt.created_at + INTERVAL '8 hours')
+                 - rt.created_at
+               )) / 60
+             )::int,
+             0
+           )
+           FROM refresh_tokens rt
+           WHERE rt.user_id = u.id
+         ) AS total_minutes
        FROM users u
        LEFT JOIN hotel_profiles hp ON hp.user_id = u.id
        WHERE u.role = 'hotel_finance_user'
@@ -1060,7 +1078,22 @@ router.get("/admin/hotel-activity", async (_req, res, next) => {
       []
     );
 
-    return res.json({ accounts: result.rows });
+    const orgsResult = await query(
+      `SELECT
+         o.id,
+         o.name,
+         o.corporate_user_id,
+         o.contact_email,
+         o.is_active,
+         o.last_login_at,
+         o.created_at,
+         o.status
+       FROM organizations o
+       ORDER BY o.last_login_at DESC NULLS LAST`,
+      []
+    );
+
+    return res.json({ accounts: hotelsResult.rows, organizations: orgsResult.rows });
   } catch (error) {
     return next(error);
   }
@@ -1791,6 +1824,8 @@ router.post("/corporate/login", authLimiter, async (req, res, next) => {
 
       const org = orgResult.rows[0];
 
+      await query(`UPDATE organizations SET last_login_at = NOW() WHERE id = $1`, [org.id]);
+
       const accessToken = createCorporateAccessToken(org.id, org.corporate_user_id, {
         isSubUser: true,
         portalUserId: portalUser.id,
@@ -1851,6 +1886,8 @@ router.post("/corporate/login", authLimiter, async (req, res, next) => {
     if (!passwordOk) {
       return res.status(401).json({ error: { message: "Invalid credentials" } });
     }
+
+    await query(`UPDATE organizations SET last_login_at = NOW() WHERE id = $1`, [organization.id]);
 
     const accessToken = createCorporateAccessToken(organization.id, organization.corporate_user_id);
 

@@ -359,11 +359,25 @@ export interface HotelActivityAccount {
   hotel_name: string | null;
   location: string | null;
   active_sessions: number;
+  total_sessions: number;
+  total_minutes: number;
+}
+
+export interface OrgActivityEntry {
+  id: string;
+  name: string;
+  corporate_user_id: string;
+  contact_email: string | null;
+  is_active: boolean;
+  last_login_at: string | null;
+  created_at: string;
+  status: string;
 }
 
 export const fetchHotelActivity = async () => {
-  return request<{ accounts: HotelActivityAccount[] }>("/api/auth/admin/hotel-activity", {
-    method: "GET"
+  return request<{ accounts: HotelActivityAccount[]; organizations: OrgActivityEntry[] }>("/api/auth/admin/hotel-activity", {
+    method: "GET",
+    headers: { ...getAuthHeaders() }
   });
 };
 

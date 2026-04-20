@@ -81,7 +81,8 @@ ALTER TABLE organizations
   ADD COLUMN IF NOT EXISTS pan_card text,
   ADD COLUMN IF NOT EXISTS password_reset_required boolean NOT NULL DEFAULT true,
   ADD COLUMN IF NOT EXISTS baikalsphere_organization_id uuid,
-  ADD COLUMN IF NOT EXISTS baikalsphere_slug text;
+  ADD COLUMN IF NOT EXISTS baikalsphere_slug text,
+  ADD COLUMN IF NOT EXISTS last_login_at timestamptz;
 
 CREATE INDEX IF NOT EXISTS organizations_name_idx ON organizations(name);
 CREATE INDEX IF NOT EXISTS organizations_status_idx ON organizations(status);
