@@ -1093,7 +1093,35 @@ router.get("/admin/hotel-activity", async (_req, res, next) => {
       []
     );
 
-    return res.json({ accounts: hotelsResult.rows, organizations: orgsResult.rows });
+    // Daily breakdown from refresh_tokens (last 90 days)
+    const dailyResult = await query(
+      `SELECT
+         u.id AS user_id,
+         COALESCE(hp.hotel_name, u.email) AS hotel_name,
+         u.email,
+         hp.location,
+         (rt.created_at AT TIME ZONE 'Asia/Kolkata')::date AS day,
+         COUNT(*)::int AS sessions,
+         COALESCE(
+           SUM(
+             EXTRACT(EPOCH FROM (
+               LEAST(COALESCE(rt.revoked_at, NOW()), rt.created_at + INTERVAL '8 hours')
+               - rt.created_at
+             )) / 60
+           )::int,
+           0
+         ) AS minutes
+       FROM refresh_tokens rt
+       JOIN users u ON u.id = rt.user_id
+       LEFT JOIN hotel_profiles hp ON hp.user_id = u.id
+       WHERE u.role = 'hotel_finance_user'
+         AND rt.created_at >= NOW() - INTERVAL '90 days'
+       GROUP BY u.id, hp.hotel_name, u.email, hp.location, day
+       ORDER BY day DESC, minutes DESC`,
+      []
+    );
+
+    return res.json({ accounts: hotelsResult.rows, organizations: orgsResult.rows, daily: dailyResult.rows });
   } catch (error) {
     return next(error);
   }

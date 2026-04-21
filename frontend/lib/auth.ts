@@ -374,8 +374,18 @@ export interface OrgActivityEntry {
   status: string;
 }
 
+export interface DailyActivityEntry {
+  user_id: string;
+  hotel_name: string;
+  email: string;
+  location: string | null;
+  day: string;
+  sessions: number;
+  minutes: number;
+}
+
 export const fetchHotelActivity = async () => {
-  return request<{ accounts: HotelActivityAccount[]; organizations: OrgActivityEntry[] }>("/api/auth/admin/hotel-activity", {
+  return request<{ accounts: HotelActivityAccount[]; organizations: OrgActivityEntry[]; daily: DailyActivityEntry[] }>("/api/auth/admin/hotel-activity", {
     method: "GET"
   });
 };
