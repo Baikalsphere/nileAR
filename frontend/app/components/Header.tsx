@@ -1,8 +1,11 @@
 "use client"
 
+import SessionTracker from './SessionTracker'
+
 export default function Header() {
   return (
     <header className="h-16 flex items-center justify-between px-8 border-b border-[#e7ecf3] dark:border-slate-800 bg-white dark:bg-[#161f2c] flex-shrink-0 z-10">
+      <SessionTracker />
       <div className="flex items-center w-full max-w-md">
         <div className="relative w-full text-slate-400 focus-within:text-primary">
           <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">

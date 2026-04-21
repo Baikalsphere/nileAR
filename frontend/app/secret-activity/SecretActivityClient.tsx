@@ -32,12 +32,15 @@ function timeAgo(iso: string | null) {
   return `${Math.floor(days / 30)}mo ago`
 }
 
-function formatDuration(minutes: number): string {
-  if (minutes < 1) return '< 1 min'
-  if (minutes < 60) return `${minutes} min`
-  const hrs = Math.floor(minutes / 60)
-  const rem = minutes % 60
-  return rem === 0 ? `${hrs}h` : `${hrs}h ${rem}m`
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`
+  const mins = Math.floor(seconds / 60)
+  const secs = seconds % 60
+  if (mins < 60) return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`
+  const hrs = Math.floor(mins / 60)
+  const remMins = mins % 60
+  if (remMins === 0) return `${hrs}h`
+  return `${hrs}h ${remMins}m`
 }
 
 function HotelStatusBadge({ account }: { account: HotelActivityAccount }) {
@@ -127,18 +130,18 @@ export default function SecretActivityClient() {
     if (tab !== 'daily') return true
     const q = search.toLowerCase()
     return (
-      d.hotel_name.toLowerCase().includes(q) ||
-      d.email.toLowerCase().includes(q) ||
-      (d.location ?? '').toLowerCase().includes(q)
+      d.display_name.toLowerCase().includes(q) ||
+      d.user_type.toLowerCase().includes(q)
     )
   })
 
-  const totalHotelMinutes = accounts.reduce((s, a) => s + (a.total_minutes ?? 0), 0)
-  const activeSessions = accounts.reduce((s, a) => s + a.active_sessions, 0)
+  const totalHotelSeconds = accounts.reduce((s, a) => s + (a.total_seconds ?? 0), 0)
+  const totalOrgSeconds = organizations.reduce((s, o) => s + (o.total_seconds ?? 0), 0)
+  const activeSessions = accounts.reduce((s, a) => s + a.active_sessions, 0) + organizations.reduce((s, o) => s + (o.active_sessions ?? 0), 0)
   const neverLoggedIn = accounts.filter((a) => !a.last_login_at).length
   const orgsNeverLoggedIn = organizations.filter((o) => !o.last_login_at).length
   const dailyTotalSessions = filteredDaily.reduce((s, d) => s + d.sessions, 0)
-  const dailyTotalMinutes = filteredDaily.reduce((s, d) => s + d.minutes, 0)
+  const dailyTotalSeconds = filteredDaily.reduce((s, d) => s + d.total_seconds, 0)
   const uniqueDays = new Set(filteredDaily.map((d) => d.day)).size
 
   const byDate = filteredDaily.reduce<Record<string, DailyActivityEntry[]>>((acc, d) => {
@@ -178,7 +181,7 @@ export default function SecretActivityClient() {
             ['Hotels', accounts.length],
             ['Organisations', organizations.length],
             ['Active Sessions', activeSessions],
-            ['Total Hotel Usage', formatDuration(totalHotelMinutes)],
+            ['Total Hotel Usage', formatDuration(totalHotelSeconds)],
             ['Days w/ Activity', uniqueDays],
           ].map(([label, value]) => (
             <div key={String(label)} className="p-stat">
@@ -196,16 +199,15 @@ export default function SecretActivityClient() {
             <div style={{ fontWeight: 700, fontSize: 11, marginBottom: 4 }}>{formatDay(day)}</div>
             <table>
               <thead>
-                <tr><th>Hotel</th><th>Email</th><th>Location</th><th>Sessions</th><th>Time Used</th></tr>
+                <tr><th>Name</th><th>Type</th><th>Sessions</th><th>Time Used</th></tr>
               </thead>
               <tbody>
                 {byDate[day].map((d) => (
                   <tr key={d.user_id + d.day}>
-                    <td>{d.hotel_name}</td>
-                    <td>{d.email}</td>
-                    <td>{d.location ?? '-'}</td>
+                    <td>{d.display_name}</td>
+                    <td style={{ textTransform: 'capitalize' }}>{d.user_type}</td>
                     <td>{d.sessions}</td>
-                    <td>{formatDuration(d.minutes)}</td>
+                    <td>{formatDuration(d.total_seconds)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -226,7 +228,7 @@ export default function SecretActivityClient() {
                 <td>{a.location ?? '-'}</td>
                 <td>{a.last_login_at ? formatDate(a.last_login_at) : 'Never'}</td>
                 <td>{a.total_sessions}</td>
-                <td>{formatDuration(a.total_minutes ?? 0)}</td>
+                <td>{formatDuration(a.total_seconds ?? 0)}</td>
                 <td>{a.is_active ? 'Active' : 'Disabled'}</td>
               </tr>
             ))}
@@ -236,7 +238,7 @@ export default function SecretActivityClient() {
         <h2>Organisations</h2>
         <table>
           <thead>
-            <tr><th>Name</th><th>Contact</th><th>Registered</th><th>Last Login</th><th>Status</th></tr>
+            <tr><th>Name</th><th>Contact</th><th>Registered</th><th>Last Login</th><th>Sessions</th><th>Total Time</th><th>Status</th></tr>
           </thead>
           <tbody>
             {organizations.map((o) => (
@@ -245,6 +247,8 @@ export default function SecretActivityClient() {
                 <td>{o.contact_email ?? '-'}</td>
                 <td>{formatDate(o.created_at)}</td>
                 <td>{o.last_login_at ? formatDate(o.last_login_at) : 'Never'}</td>
+                <td>{o.total_sessions ?? 0}</td>
+                <td>{formatDuration(o.total_seconds ?? 0)}</td>
                 <td>{o.is_active ? 'Active' : 'Inactive'}</td>
               </tr>
             ))}
@@ -299,9 +303,9 @@ export default function SecretActivityClient() {
                 {[
                   { label: 'Hotels', value: String(accounts.length), color: '' },
                   { label: 'Organisations', value: String(organizations.length), color: '' },
-                  { label: 'Active Sessions', value: String(activeSessions), color: 'text-emerald-600 dark:text-emerald-400' },
-                  { label: 'Total Hotel Usage', value: formatDuration(totalHotelMinutes), color: 'text-blue-600 dark:text-blue-400' },
-                  { label: `Activity (${dayRange}d)`, value: `${uniqueDays} days`, color: 'text-violet-600 dark:text-violet-400' },
+                  { label: 'Live Sessions', value: String(activeSessions), color: 'text-emerald-600 dark:text-emerald-400' },
+                  { label: 'Hotel Usage', value: formatDuration(totalHotelSeconds), color: 'text-blue-600 dark:text-blue-400' },
+                  { label: 'Org Usage', value: formatDuration(totalOrgSeconds), color: 'text-violet-600 dark:text-violet-400' },
                 ].map(({ label, value, color }) => (
                   <div key={label} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
                     <p className="text-xs text-text-sub-light dark:text-text-sub-dark">{label}</p>
@@ -368,7 +372,7 @@ export default function SecretActivityClient() {
                 )}
                 {tab === 'daily' && (
                   <span className="text-xs text-text-sub-light dark:text-text-sub-dark">
-                    {dailyTotalSessions} sessions &middot; {formatDuration(dailyTotalMinutes)} total
+                    {dailyTotalSessions} sessions &middot; {formatDuration(dailyTotalSeconds)} total
                   </span>
                 )}
               </div>
@@ -418,8 +422,8 @@ export default function SecretActivityClient() {
                             </div>
                           </td>
                           <td className="px-4 py-3 text-right">
-                            {(a.total_minutes ?? 0) > 0 ? (
-                              <span className="font-semibold text-text-main-light dark:text-text-main-dark">{formatDuration(a.total_minutes)}</span>
+                            {(a.total_seconds ?? 0) > 0 ? (
+                              <span className="font-semibold text-text-main-light dark:text-text-main-dark">{formatDuration(a.total_seconds)}</span>
                             ) : <span className="text-xs text-slate-400">-</span>}
                           </td>
                           <td className="px-4 py-3 text-center">
@@ -441,14 +445,14 @@ export default function SecretActivityClient() {
                   <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-800 text-sm">
                     <thead>
                       <tr className="bg-slate-50 dark:bg-slate-800/60">
-                        {['Organisation', 'User ID', 'Contact', 'Registered', 'Last Login', 'Status'].map((h) => (
+                        {['Organisation', 'User ID', 'Contact', 'Registered', 'Last Login', 'Sessions', 'Total Time', 'Status'].map((h) => (
                           <th key={h} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-text-sub-light dark:text-text-sub-dark">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                       {filteredOrgs.length === 0 ? (
-                        <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-text-sub-light dark:text-text-sub-dark">No organisations found.</td></tr>
+                        <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-text-sub-light dark:text-text-sub-dark">No organisations found.</td></tr>
                       ) : filteredOrgs.map((o) => (
                         <tr key={o.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
                           <td className="px-4 py-3">
@@ -468,6 +472,21 @@ export default function SecretActivityClient() {
                               <span className="text-amber-600 dark:text-amber-400 font-medium text-xs">Never</span>
                             )}
                           </td>
+                          <td className="px-4 py-3 text-center">
+                            <div className="flex flex-col items-center gap-0.5">
+                              {(o.active_sessions ?? 0) > 0 && (
+                                <span className="inline-flex items-center rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-700 dark:bg-violet-900/20 dark:text-violet-400">
+                                  {o.active_sessions} active
+                                </span>
+                              )}
+                              <span className="text-xs text-text-sub-light dark:text-text-sub-dark">{o.total_sessions ?? 0} total</span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            {(o.total_seconds ?? 0) > 0 ? (
+                              <span className="font-semibold text-text-main-light dark:text-text-main-dark">{formatDuration(o.total_seconds ?? 0)}</span>
+                            ) : <span className="text-xs text-slate-400">-</span>}
+                          </td>
                           <td className="px-4 py-3 text-center"><OrgStatusBadge org={o} /></td>
                         </tr>
                       ))}
@@ -486,7 +505,7 @@ export default function SecretActivityClient() {
                     </div>
                   ) : sortedDates.map((day) => {
                     const rows = byDate[day]
-                    const dayTotal = rows.reduce((s, r) => s + r.minutes, 0)
+                    const dayTotal = rows.reduce((s, r) => s + r.total_seconds, 0)
                     const daySessions = rows.reduce((s, r) => s + r.sessions, 0)
                     return (
                       <div key={day} className="rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900 overflow-hidden">
@@ -496,7 +515,7 @@ export default function SecretActivityClient() {
                             <span className="font-bold text-text-main-light dark:text-text-main-dark">{formatDay(day)}</span>
                           </div>
                           <div className="flex items-center gap-4 text-xs text-text-sub-light dark:text-text-sub-dark">
-                            <span><span className="font-semibold text-text-main-light dark:text-text-main-dark">{rows.length}</span> hotel{rows.length !== 1 ? 's' : ''}</span>
+                            <span><span className="font-semibold text-text-main-light dark:text-text-main-dark">{rows.length}</span> user{rows.length !== 1 ? 's' : ''}</span>
                             <span><span className="font-semibold text-text-main-light dark:text-text-main-dark">{daySessions}</span> session{daySessions !== 1 ? 's' : ''}</span>
                             <span className="font-semibold text-blue-600 dark:text-blue-400">{formatDuration(dayTotal)}</span>
                           </div>
@@ -504,9 +523,8 @@ export default function SecretActivityClient() {
                         <table className="min-w-full text-sm">
                           <thead>
                             <tr className="text-xs uppercase tracking-wide text-text-sub-light dark:text-text-sub-dark">
-                              <th className="px-5 py-2 text-left font-semibold">Hotel</th>
-                              <th className="px-5 py-2 text-left font-semibold">Email</th>
-                              <th className="px-5 py-2 text-left font-semibold">Location</th>
+                              <th className="px-5 py-2 text-left font-semibold">Name</th>
+                              <th className="px-5 py-2 text-left font-semibold">Type</th>
                               <th className="px-5 py-2 text-center font-semibold">Sessions</th>
                               <th className="px-5 py-2 text-right font-semibold">Time Used</th>
                             </tr>
@@ -514,23 +532,30 @@ export default function SecretActivityClient() {
                           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                             {rows.map((r) => (
                               <tr key={r.user_id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
-                                <td className="px-5 py-3 font-medium text-text-main-light dark:text-text-main-dark">{r.hotel_name}</td>
-                                <td className="px-5 py-3 font-mono text-xs text-text-sub-light dark:text-text-sub-dark">{r.email}</td>
-                                <td className="px-5 py-3 text-xs text-text-sub-light dark:text-text-sub-dark">{r.location ?? '-'}</td>
+                                <td className="px-5 py-3 font-medium text-text-main-light dark:text-text-main-dark">{r.display_name}</td>
+                                <td className="px-5 py-3">
+                                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${
+                                    r.user_type === 'hotel'
+                                      ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400'
+                                      : 'bg-violet-50 text-violet-700 dark:bg-violet-900/20 dark:text-violet-400'
+                                  }`}>
+                                    {r.user_type === 'hotel' ? 'Hotel' : 'Org'}
+                                  </span>
+                                </td>
                                 <td className="px-5 py-3 text-center">
                                   <span className="inline-flex items-center rounded-full bg-blue-50 dark:bg-blue-900/20 px-2 py-0.5 text-xs font-semibold text-blue-700 dark:text-blue-400">
                                     {r.sessions}
                                   </span>
                                 </td>
                                 <td className="px-5 py-3 text-right font-semibold text-text-main-light dark:text-text-main-dark">
-                                  {formatDuration(r.minutes)}
+                                  {formatDuration(r.total_seconds)}
                                 </td>
                               </tr>
                             ))}
                           </tbody>
                           <tfoot>
                             <tr className="bg-slate-50 dark:bg-slate-800/40 text-xs font-bold">
-                              <td colSpan={3} className="px-5 py-2 text-right text-text-sub-light dark:text-text-sub-dark uppercase tracking-wide">Day Total</td>
+                              <td colSpan={2} className="px-5 py-2 text-right text-text-sub-light dark:text-text-sub-dark uppercase tracking-wide">Day Total</td>
                               <td className="px-5 py-2 text-center text-text-main-light dark:text-text-main-dark">{daySessions}</td>
                               <td className="px-5 py-2 text-right text-blue-600 dark:text-blue-400">{formatDuration(dayTotal)}</td>
                             </tr>

@@ -360,7 +360,7 @@ export interface HotelActivityAccount {
   location: string | null;
   active_sessions: number;
   total_sessions: number;
-  total_minutes: number;
+  total_seconds: number;
 }
 
 export interface OrgActivityEntry {
@@ -372,16 +372,18 @@ export interface OrgActivityEntry {
   last_login_at: string | null;
   created_at: string;
   status: string;
+  active_sessions: number;
+  total_sessions: number;
+  total_seconds: number;
 }
 
 export interface DailyActivityEntry {
   user_id: string;
-  hotel_name: string;
-  email: string;
-  location: string | null;
+  user_type: string;
+  display_name: string;
   day: string;
   sessions: number;
-  minutes: number;
+  total_seconds: number;
 }
 
 export const fetchHotelActivity = async () => {

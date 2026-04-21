@@ -1032,6 +1032,108 @@ router.post("/admin/hotel-accounts", async (req, res, next) => {
   }
 });
 
+// ── Session tracking ──────────────────────────────────────────
+// POST /api/auth/session/start  — called once on app mount
+router.post("/session/start", async (req, res, next) => {
+  try {
+    const header = req.headers.authorization;
+    const token = header?.startsWith("Bearer ") ? header.slice(7).trim() : null;
+    if (!token) return res.status(401).json({ error: { message: "Unauthorized" } });
+
+    let userId: string | null = null;
+    let userType: "hotel" | "corporate" = "hotel";
+    let displayName: string | null = null;
+
+    // Try Baikalsphere token first
+    if (config.baikalsphereJwtSecret) {
+      try {
+        const bsPayload = jwt.verify(token, config.baikalsphereJwtSecret, {
+          issuer: "baikalsphere-auth",
+          audience: "baikalsphere",
+        }) as BaikalsphereTokenPayload;
+
+        if (bsPayload.orgId) {
+          userType = "corporate";
+          const orgRow = await query(`SELECT id, name FROM organizations WHERE baikalsphere_organization_id::text = $1 OR lower(contact_email::text) = lower($2) LIMIT 1`, [bsPayload.orgId, bsPayload.email]);
+          userId = orgRow.rows[0]?.id ?? bsPayload.orgId;
+          displayName = orgRow.rows[0]?.name ?? bsPayload.email;
+        } else {
+          userType = "hotel";
+          const userRow = await query(`SELECT u.id, COALESCE(hp.hotel_name, u.email) AS name FROM users u LEFT JOIN hotel_profiles hp ON hp.user_id = u.id WHERE u.baikalsphere_user_id = $1 LIMIT 1`, [bsPayload.sub]);
+          userId = userRow.rows[0]?.id ?? bsPayload.sub;
+          displayName = userRow.rows[0]?.name ?? bsPayload.email;
+        }
+      } catch { /* fall through */ }
+    }
+
+    // Try legacy hotel token
+    if (!userId) {
+      try {
+        const payload = jwt.verify(token, config.jwtAccessSecret, { issuer: "hotel-finance-api", audience: "hotel-finance-web" }) as { sub: string; scope: string };
+        if (payload.scope === "hotel-finance") {
+          userType = "hotel";
+          const userRow = await query(`SELECT u.id, COALESCE(hp.hotel_name, u.email) AS name FROM users u LEFT JOIN hotel_profiles hp ON hp.user_id = u.id WHERE u.id = $1 LIMIT 1`, [payload.sub]);
+          userId = payload.sub;
+          displayName = userRow.rows[0]?.name ?? null;
+        }
+      } catch { /* fall through */ }
+    }
+
+    // Try legacy corporate token
+    if (!userId) {
+      try {
+        const payload = jwt.verify(token, config.jwtAccessSecret, { issuer: "hotel-finance-api", audience: "corporate-portal-web" }) as { sub: string; scope: string; corporateUserId?: string };
+        if (payload.scope === "corporate-portal") {
+          userType = "corporate";
+          const orgRow = await query(`SELECT id, name FROM organizations WHERE id = $1 OR corporate_user_id = $1 LIMIT 1`, [payload.sub]);
+          userId = orgRow.rows[0]?.id ?? payload.sub;
+          displayName = orgRow.rows[0]?.name ?? null;
+        }
+      } catch { /* fall through */ }
+    }
+
+    if (!userId) return res.status(401).json({ error: { message: "Unauthorized" } });
+
+    const result = await query(
+      `INSERT INTO user_sessions (user_id, user_type, display_name) VALUES ($1, $2, $3) RETURNING id`,
+      [userId, userType, displayName]
+    );
+    return res.json({ sessionId: result.rows[0].id });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// POST /api/auth/session/ping  — called every 30s while tab is open
+router.post("/session/ping", async (req, res, next) => {
+  try {
+    const { sessionId } = req.body as { sessionId?: string };
+    if (!sessionId) return res.status(400).json({ error: { message: "sessionId required" } });
+    await query(`UPDATE user_sessions SET last_seen_at = NOW() WHERE id = $1 AND ended_at IS NULL`, [sessionId]);
+    return res.json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+// POST /api/auth/session/end  — called on logout / tab close
+router.post("/session/end", async (req, res, next) => {
+  try {
+    const { sessionId } = req.body as { sessionId?: string };
+    if (!sessionId) return res.status(400).json({ error: { message: "sessionId required" } });
+    await query(
+      `UPDATE user_sessions
+       SET ended_at = NOW(),
+           duration_seconds = GREATEST(1, EXTRACT(EPOCH FROM (NOW() - started_at))::int)
+       WHERE id = $1 AND ended_at IS NULL`,
+      [sessionId]
+    );
+    return res.json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.get("/admin/hotel-activity", async (_req, res, next) => {
   try {
     const hotelsResult = await query(
@@ -1046,31 +1148,17 @@ router.get("/admin/hotel-activity", async (_req, res, next) => {
          u.locked_until,
          hp.hotel_name,
          hp.location,
-         (
-           SELECT COUNT(*)::int
-           FROM refresh_tokens rt
-           WHERE rt.user_id = u.id
-             AND rt.revoked_at IS NULL
-             AND rt.expires_at > NOW()
-         ) AS active_sessions,
-         (
-           SELECT COUNT(*)::int
-           FROM refresh_tokens rt
-           WHERE rt.user_id = u.id
-         ) AS total_sessions,
-         (
-           SELECT COALESCE(
-             SUM(
-               EXTRACT(EPOCH FROM (
-                 LEAST(COALESCE(rt.revoked_at, NOW()), rt.created_at + INTERVAL '8 hours')
-                 - rt.created_at
-               )) / 60
-             )::int,
-             0
-           )
-           FROM refresh_tokens rt
-           WHERE rt.user_id = u.id
-         ) AS total_minutes
+         -- accurate session count from user_sessions
+         (SELECT COUNT(*)::int FROM user_sessions s WHERE s.user_id = u.id::text AND s.ended_at IS NULL AND s.last_seen_at > NOW() - INTERVAL '2 minutes') AS active_sessions,
+         (SELECT COUNT(*)::int FROM user_sessions s WHERE s.user_id = u.id::text) AS total_sessions,
+         -- accurate total seconds: ended sessions use duration_seconds; active sessions use elapsed so far
+         (SELECT COALESCE(
+           SUM(CASE
+             WHEN s.ended_at IS NOT NULL THEN s.duration_seconds
+             WHEN s.last_seen_at > NOW() - INTERVAL '2 minutes' THEN GREATEST(1, EXTRACT(EPOCH FROM (NOW() - s.started_at))::int)
+             ELSE GREATEST(1, EXTRACT(EPOCH FROM (s.last_seen_at - s.started_at))::int)
+           END), 0
+         )::int FROM user_sessions s WHERE s.user_id = u.id::text) AS total_seconds
        FROM users u
        LEFT JOIN hotel_profiles hp ON hp.user_id = u.id
        WHERE u.role = 'hotel_finance_user'
@@ -1087,37 +1175,37 @@ router.get("/admin/hotel-activity", async (_req, res, next) => {
          o.is_active,
          o.last_login_at,
          o.created_at,
-         o.status
+         o.status,
+         (SELECT COUNT(*)::int FROM user_sessions s WHERE s.user_id = o.id AND s.ended_at IS NULL AND s.last_seen_at > NOW() - INTERVAL '2 minutes') AS active_sessions,
+         (SELECT COUNT(*)::int FROM user_sessions s WHERE s.user_id = o.id) AS total_sessions,
+         (SELECT COALESCE(
+           SUM(CASE
+             WHEN s.ended_at IS NOT NULL THEN s.duration_seconds
+             WHEN s.last_seen_at > NOW() - INTERVAL '2 minutes' THEN GREATEST(1, EXTRACT(EPOCH FROM (NOW() - s.started_at))::int)
+             ELSE GREATEST(1, EXTRACT(EPOCH FROM (s.last_seen_at - s.started_at))::int)
+           END), 0
+         )::int FROM user_sessions s WHERE s.user_id = o.id) AS total_seconds
        FROM organizations o
        ORDER BY o.last_login_at DESC NULLS LAST`,
       []
     );
 
-    // Daily breakdown from refresh_tokens (last 90 days)
+    // Daily breakdown from user_sessions (last 90 days) — both hotel and corporate
     const dailyResult = await query(
       `SELECT
-         u.id AS user_id,
-         COALESCE(hp.hotel_name, u.email) AS hotel_name,
-         u.email,
-         hp.location,
-         (rt.created_at AT TIME ZONE 'Asia/Kolkata')::date AS day,
+         s.user_id,
+         s.user_type,
+         s.display_name,
+         (s.started_at AT TIME ZONE 'Asia/Kolkata')::date AS day,
          COUNT(*)::int AS sessions,
-         COALESCE(
-           SUM(
-             EXTRACT(EPOCH FROM (
-               LEAST(COALESCE(rt.revoked_at, NOW()), rt.created_at + INTERVAL '8 hours')
-               - rt.created_at
-             )) / 60
-           )::int,
-           0
-         ) AS minutes
-       FROM refresh_tokens rt
-       JOIN users u ON u.id = rt.user_id
-       LEFT JOIN hotel_profiles hp ON hp.user_id = u.id
-       WHERE u.role = 'hotel_finance_user'
-         AND rt.created_at >= NOW() - INTERVAL '90 days'
-       GROUP BY u.id, hp.hotel_name, u.email, hp.location, day
-       ORDER BY day DESC, minutes DESC`,
+         COALESCE(SUM(CASE
+           WHEN s.ended_at IS NOT NULL THEN s.duration_seconds
+           ELSE GREATEST(1, EXTRACT(EPOCH FROM (s.last_seen_at - s.started_at))::int)
+         END), 0)::int AS total_seconds
+       FROM user_sessions s
+       WHERE s.started_at >= NOW() - INTERVAL '90 days'
+       GROUP BY s.user_id, s.user_type, s.display_name, day
+       ORDER BY day DESC, total_seconds DESC`,
       []
     );
 

@@ -447,3 +447,18 @@ CREATE TRIGGER portal_users_set_updated_at
   BEFORE UPDATE ON portal_users
   FOR EACH ROW
   EXECUTE PROCEDURE set_updated_at();
+
+CREATE TABLE IF NOT EXISTS user_sessions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  user_type text NOT NULL CHECK (user_type IN ('hotel', 'corporate')),
+  display_name text,
+  started_at timestamptz NOT NULL DEFAULT now(),
+  last_seen_at timestamptz NOT NULL DEFAULT now(),
+  ended_at timestamptz,
+  duration_seconds integer
+);
+
+CREATE INDEX IF NOT EXISTS user_sessions_user_id_idx ON user_sessions(user_id);
+CREATE INDEX IF NOT EXISTS user_sessions_started_at_idx ON user_sessions(started_at DESC);
+CREATE INDEX IF NOT EXISTS user_sessions_user_type_idx ON user_sessions(user_type);
