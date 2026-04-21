@@ -42,6 +42,7 @@ export default function BookingsClient() {
   const [hotelLogoUrl, setHotelLogoUrl] = useState<string | null>(null)
   const [isHotelLogoFailed, setIsHotelLogoFailed] = useState(false)
   const [pendingRequestsCount, setPendingRequestsCount] = useState(0)
+  const [totalRevenueSummary, setTotalRevenueSummary] = useState<number | null>(null)
   const [guestInputMode, setGuestInputMode] = useState<'employee' | 'manual'>('employee')
   const [hasContract, setHasContract] = useState<boolean | null>(null)
   const [roomPricingMode, setRoomPricingMode] = useState<'contract' | 'manual'>('contract')
@@ -68,6 +69,9 @@ export default function BookingsClient() {
         toDate
       })
       setBookings(bookingResponse.bookings)
+      if (bookingResponse.summary) {
+        setTotalRevenueSummary(bookingResponse.summary.totalRevenue)
+      }
     } catch (loadError) {
       const message = loadError instanceof Error ? loadError.message : 'Failed to load bookings'
       setError(message)
@@ -302,7 +306,7 @@ export default function BookingsClient() {
     })
   }, [bookings, invoiceFilter, searchTerm])
 
-  const totalRevenue = bookings.reduce((sum, booking) => sum + booking.totalPrice, 0)
+  const totalRevenue = totalRevenueSummary ?? bookings.reduce((sum, booking) => sum + booking.totalPrice, 0)
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background-light dark:bg-background-dark text-text-main-light dark:text-text-main-dark transition-colors duration-200">

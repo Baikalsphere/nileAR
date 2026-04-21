@@ -586,10 +586,11 @@ router.get("/dashboard/summary", async (req, res, next) => {
       return date.getFullYear() === currentYear && date.getMonth() === currentMonth;
     };
 
-    // Total Revenue = sum of all non-cancelled bookings
+    // Total Revenue = full invoice value (room + bills) for invoiced bookings,
+    // or room charges only for bookings not yet invoiced
     const totalRevenue = bookings
       .filter((b) => !b.isCancelled)
-      .reduce((sum, b) => sum + b.totalPrice, 0);
+      .reduce((sum, b) => sum + (b.hasInvoice ? b.invoiceAmount : b.totalPrice), 0);
 
     // Collected = bookings whose invoice has been paid/approved
     const totalCollected = bookings

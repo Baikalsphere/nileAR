@@ -273,7 +273,10 @@ export const fetchBookings = async (params?: { status?: string; fromDate?: strin
     searchParams.set("toDate", params.toDate)
   }
 
-  return request<{ bookings: BookingRecord[] }>(`/api/bookings${searchParams.toString() ? `?${searchParams.toString()}` : ""}`, {
+  return request<{
+    bookings: BookingRecord[]
+    summary: { totalRevenue: number; totalCollected: number; totalPending: number; activeBookings: number }
+  }>(`/api/bookings${searchParams.toString() ? `?${searchParams.toString()}` : ""}`, {
     method: "GET"
   })
 }
