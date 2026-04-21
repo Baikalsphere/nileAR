@@ -117,6 +117,7 @@ export interface BookingRecord {
   invoiceDate?: string | null
   invoiceDueDate?: string | null
   sentAt?: string | null
+  invoiceAmount?: number | null
 }
 
 export interface BookingRequestRecord {

@@ -718,7 +718,8 @@ router.get("/", async (req, res, next) => {
               o.credit_period,
               i.invoice_number,
               i.invoice_date,
-              i.due_date
+              i.due_date,
+              i.amount AS invoice_amount
        FROM hotel_bookings b
        JOIN organizations o ON o.id = b.organization_id
        LEFT JOIN portal_users e ON e.id = b.employee_id
@@ -752,10 +753,15 @@ router.get("/", async (req, res, next) => {
       invoiceNumber: row.invoice_number,
       invoiceDate: row.invoice_date,
       invoiceDueDate: row.due_date,
-      sentAt: row.sent_at
+      sentAt: row.sent_at,
+      invoiceAmount: row.invoice_amount != null ? Number(row.invoice_amount) : null
     }));
 
-    return res.status(200).json({ bookings });
+    const totalRevenue = bookings
+      .filter((b) => b.status !== "cancelled")
+      .reduce((sum, b) => sum + (b.invoiceAmount != null ? b.invoiceAmount : b.totalPrice), 0);
+
+    return res.status(200).json({ bookings, summary: { totalRevenue } });
   } catch (error) {
     return next(error);
   }
