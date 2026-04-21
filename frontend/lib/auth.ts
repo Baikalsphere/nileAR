@@ -376,8 +376,7 @@ export interface OrgActivityEntry {
 
 export const fetchHotelActivity = async () => {
   return request<{ accounts: HotelActivityAccount[]; organizations: OrgActivityEntry[] }>("/api/auth/admin/hotel-activity", {
-    method: "GET",
-    headers: { ...getAuthHeaders() }
+    method: "GET"
   });
 };
 
