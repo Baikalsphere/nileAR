@@ -61,26 +61,21 @@ function OrgStatusBadge({ org }: { org: OrgActivityEntry }) {
 type Tab = 'hotels' | 'organizations' | 'daily'
 type DayRange = 7 | 14 | 30 | 90
 
-const PRINT_STYLES = `
-@media print {
-  body * { visibility: hidden !important; }
-  #ar-print-area, #ar-print-area * { visibility: visible !important; }
-  #ar-print-area {
-    position: fixed; inset: 0; padding: 24px;
-    font-family: Arial, sans-serif; font-size: 11px;
-    color: #000; background: #fff;
-  }
-  .no-print { display: none !important; }
-  table { border-collapse: collapse; width: 100%; margin-bottom: 8px; }
-  th, td { border: 1px solid #cbd5e1; padding: 5px 8px; text-align: left; }
-  th { background: #f1f5f9; font-weight: 700; font-size: 10px; text-transform: uppercase; }
+const PRINT_STYLES = `#ar-print-area { display: none; }`
+
+const PDF_WINDOW_STYLES = `
+  body { font-family: Arial, sans-serif; font-size: 11px; color: #000; margin: 24px; }
+  h1 { font-size: 18px; font-weight: 800; margin-bottom: 2px; }
+  h2 { font-size: 13px; font-weight: 700; margin: 20px 0 6px; page-break-after: avoid; color: #1e293b; }
+  table { border-collapse: collapse; width: 100%; margin-bottom: 16px; }
+  th, td { border: 1px solid #cbd5e1; padding: 5px 8px; text-align: left; font-size: 10px; }
+  th { background: #f1f5f9; font-weight: 700; font-size: 9px; text-transform: uppercase; }
   tr:nth-child(even) td { background: #f8fafc; }
-  h2 { font-size: 13px; font-weight: 700; margin: 18px 0 6px; }
   .p-stat-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
   .p-stat { border: 1px solid #e2e8f0; border-radius: 6px; padding: 6px 12px; min-width: 110px; }
-  .p-stat-label { font-size: 9px; text-transform: uppercase; color: #64748b; }
+  .p-stat-label { font-size: 9px; text-transform: uppercase; color: #64748b; margin-bottom: 2px; }
   .p-stat-value { font-size: 16px; font-weight: 700; }
-}
+  @media print { @page { margin: 1.5cm; size: A4; } }
 `
 
 export default function SecretActivityClient() {
@@ -159,10 +154,29 @@ export default function SecretActivityClient() {
 
   const handleDownloadPDF = () => {
     setPrinting(true)
-    setTimeout(() => {
-      window.print()
+    const content = document.getElementById('ar-print-area')?.innerHTML ?? ''
+    const win = window.open('', '_blank', 'width=900,height=700')
+    if (!win) {
       setPrinting(false)
-    }, 150)
+      alert('Please allow popups for this site to download PDFs.')
+      return
+    }
+    win.document.write(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>AR Activity Report</title>
+  <style>${PDF_WINDOW_STYLES}</style>
+</head>
+<body>${content}</body>
+</html>`)
+    win.document.close()
+    win.focus()
+    setTimeout(() => {
+      win.print()
+      win.close()
+      setPrinting(false)
+    }, 500)
   }
 
   return (
