@@ -103,6 +103,7 @@ export const sendCorporateCredentialsEmail = async (payload: {
   userId: string;
   password: string;
 }) => {
+  const portalUrl = "http://4.213.171.46/";
   await sendMail({
     to: payload.recipientEmail,
     subject: `Corporate Portal Credentials - ${payload.organizationName}`,
@@ -113,6 +114,8 @@ export const sendCorporateCredentialsEmail = async (payload: {
       `User ID: ${payload.userId}`,
       `Password: ${payload.password}`,
       "",
+      `Access the portal at: ${portalUrl}`,
+      "",
       "Please sign in and change your password after the first login.",
       ""
     ].join("\n"),
@@ -120,6 +123,7 @@ export const sendCorporateCredentialsEmail = async (payload: {
       <p>Hello ${payload.organizationName},</p>
       <p>Your Corporate Portal login credentials are:</p>
       <p><strong>User ID:</strong> ${payload.userId}<br/><strong>Password:</strong> ${payload.password}</p>
+      <p><strong>Portal:</strong> <a href="${portalUrl}">${portalUrl}</a></p>
       <p>Please sign in and change your password after the first login.</p>
     `
   });
@@ -131,6 +135,7 @@ export const sendHotelCredentialsEmail = async (payload: {
   userId: string;
   password: string;
 }) => {
+  const portalUrl = "http://4.213.171.46/";
   await sendMail({
     to: payload.recipientEmail,
     subject: `Hotel Finance Credentials - ${payload.hotelName}`,
@@ -141,6 +146,8 @@ export const sendHotelCredentialsEmail = async (payload: {
       "Your login credentials are:",
       `User ID: ${payload.userId}`,
       `Password: ${payload.password}`,
+      "",
+      `Access the portal at: ${portalUrl}`,
       "",
       "Your account has been linked to the Baikalsphere centralized authentication system.",
       "You can now access both the Hotel Finance module and other Baikalsphere modules with your credentials.",
@@ -153,6 +160,7 @@ export const sendHotelCredentialsEmail = async (payload: {
       <p>Your Hotel Finance account has been created.</p>
       <p>Your login credentials are:</p>
       <p><strong>User ID:</strong> ${payload.userId}<br/><strong>Password:</strong> ${payload.password}</p>
+      <p><strong>Portal:</strong> <a href="${portalUrl}">${portalUrl}</a></p>
       <p>Your account has been linked to the <strong>Baikalsphere</strong> centralized authentication system.<br/>
       You can now access both the Hotel Finance module and other Baikalsphere modules with your credentials.</p>
       <p>Visit the Hotel Profile section to update your password.</p>
@@ -347,6 +355,7 @@ export const sendPortalUserCredentialsEmail = async (payload: {
   portalType: "hotel_finance" | "corporate";
 }) => {
   const portalLabel = payload.portalType === "hotel_finance" ? "Hotel Finance Portal" : "Corporate Portal";
+  const portalUrl = "http://4.213.171.46/";
 
   await sendMail({
     to: payload.recipientEmail,
@@ -360,6 +369,8 @@ export const sendPortalUserCredentialsEmail = async (payload: {
       `Email: ${payload.loginEmail}`,
       `Password: ${payload.password}`,
       "",
+      `Access the portal at: ${portalUrl}`,
+      "",
       "Please sign in and change your password from the settings page.",
       ""
     ].join("\n"),
@@ -371,6 +382,7 @@ export const sendPortalUserCredentialsEmail = async (payload: {
         <strong>Email:</strong> ${payload.loginEmail}<br/>
         <strong>Password:</strong> ${payload.password}
       </p>
+      <p><strong>Portal:</strong> <a href="${portalUrl}">${portalUrl}</a></p>
       <p>Please sign in and change your password from the settings page.</p>
     `
   });
