@@ -1869,7 +1869,7 @@ router.post("/hotel/change-password", async (req, res, next) => {
     const { currentPassword, newPassword } = hotelChangePasswordSchema.parse(req.body);
 
     const userResult = await query(
-      `SELECT id, password_hash, is_active
+      `SELECT id, email, password_hash, is_active
        FROM users
        WHERE id = $1
        LIMIT 1`,
@@ -1902,6 +1902,18 @@ router.post("/hotel/change-password", async (req, res, next) => {
        WHERE id = $1`,
       [payload.sub, passwordHash]
     );
+
+    // Best-effort sync to Baikalsphere so both login systems stay in sync
+    if (config.baikalsphereAuthUrl && config.baikalsphereInternalSecret) {
+      fetch(`${config.baikalsphereAuthUrl}/api/internal/sync-user-password`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Internal-Secret": config.baikalsphereInternalSecret,
+        },
+        body: JSON.stringify({ email: user.email, passwordHash }),
+      }).catch((err) => console.error("[baikalsphere] Password sync failed:", err?.message));
+    }
 
     return res.status(200).json({ ok: true });
   } catch (error) {
