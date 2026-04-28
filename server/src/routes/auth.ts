@@ -1485,11 +1485,8 @@ router.get("/resolve-portal", async (req, res, next) => {
       return res.json({ portal: "corporate-portal" });
     }
 
-    if (bsPayload.orgId) {
-      return res.json({ portal: "corporate-portal" });
-    }
-
-    // Then check hotel users
+    // Check hotel users before falling back on orgId — a hotel user may have
+    // an orgId in baikalsphere for unrelated reasons and must not be sent to corporate-portal.
     const hotelResult = await query(
       `SELECT id FROM users WHERE baikalsphere_user_id = $1`,
       [bsPayload.sub]
@@ -1506,6 +1503,10 @@ router.get("/resolve-portal", async (req, res, next) => {
     if (portalUserResult.rowCount! > 0) {
       const pu = portalUserResult.rows[0];
       return res.json({ portal: pu.portal_type === "corporate" ? "corporate-portal" : "hotel-finance" });
+    }
+
+    if (bsPayload.orgId) {
+      return res.json({ portal: "corporate-portal" });
     }
 
     // New user — default to hotel-finance (auto-provisioned on /hotel/me)
